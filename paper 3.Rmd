@@ -1,0 +1,897 @@
+---
+title: "MIMIC3_FINAL"
+author: "Tianhao Gu"
+date: "2018/8/6"
+output: pdf_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+if (!require("tidyverse")){
+  install.packages("tidyverse")
+  library(tidyverse)
+}
+if (!require("dplyr")){
+  install.packages("dplyr")
+  library(dplyr)
+}
+library(randomForest)
+```
+
+
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+# admissionss <- read.csv("~/data_mimic/MIMIC_RAW_CSV/ADMISSIONS.csv")
+# admissionss <-admissionss[complete.cases(admissionss),]
+# patientss <- read.csv("~/data_mimic/MIMIC_RAW_CSV/PATIENTS.csv")
+# patientss <- patientss[complete.cases(patientss),]
+# patients_aki <- read.csv("~/data_mimic/MIMIC_RAW_CSV/aki.csv")
+# patients_aki <- patients_aki[complete.cases(patients_aki),]
+# icustayss <- read.csv("~/data_mimic/MIMIC_RAW_CSV/ICUSTAYS.csv")
+# icustayss <- icustayss[complete.cases(icustayss),]
+```
+
+
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+# mortality<-admissionss[,c("SUBJECT_ID","HADM_ID","ADMITTIME","DEATHTIME")]
+# patient_age<-patientss[,c("SUBJECT_ID","DOB")]
+# patient_aki<-patients_aki[,c("SUBJECT_ID","HADM_ID")]
+# icu_infor<-icustayss[,c("SUBJECT_ID","HADM_ID","ICUSTAY_ID","LOS","INTIME")]
+# 
+# patient_age<-inner_join(patient_age,patient_aki,by="SUBJECT_ID")
+# comb_for_age_mortality<-inner_join(mortality,patient_age,by=c("SUBJECT_ID","HADM_ID"))
+# 
+# death_time<-ymd_hms(comb_for_age_mortality$DEATHTIME)
+# admit_time<-ymd_hms(comb_for_age_mortality$ADMITTIME)
+# mortality_thirty<-(death_time-admit_time)/86400
+# comb_for_age_mortality$mortality_time<-mortality_thirty
+# comb_for_age_mortality=within(comb_for_age_mortality,{MORTALITY=ifelse(mortality_time>0,1,0)})
+# comb_for_age_mortality$MORTALITY[is.na(comb_for_age_mortality$MORTALITY)] <- 0
+# 
+# 
+# admitdate <- ymd_hms(comb_for_age_mortality$ADMITTIME)
+# deathdate <- ymd_hms(comb_for_age_mortality$DEATHTIME)
+# birthdate <- ymd_hms(comb_for_age_mortality$DOB)
+# comb_for_age_mortality$age  <- round((difftime(admitdate,birthdate,units="days"))/365.242)
+# comb_for_age_mortality$timedf <- round((difftime(deathdate,birthdate,units="days"))/365.242)
+# comb_for_age_mortality <- subset(comb_for_age_mortality, comb_for_age_mortality$age>=18)
+# comb_for_age_mortality <- comb_for_age_mortality[comb_for_age_mortality$age<100 ,]
+# comb_for_age_mortality$age <- as.numeric(comb_for_age_mortality$age)
+# comb_for_age_mortality$AGE <- ifelse(comb_for_age_mortality$age<50,"<50",
+#            ifelse(comb_for_age_mortality$age>49 & comb_for_age_mortality$age<60,"50-60",
+#            ifelse(comb_for_age_mortality$age>59 & comb_for_age_mortality$age<70,"60-70",
+#            ifelse(comb_for_age_mortality$age>69 & comb_for_age_mortality$age<80,"70-80",
+#            ifelse(comb_for_age_mortality$age>79,"80+",
+#                   NA)))))
+# comb_for_age_mortality$AGE <- as.factor(comb_for_age_mortality$AGE)
+# comb_for_age_mortality<-comb_for_age_mortality[,c("SUBJECT_ID","HADM_ID","MORTALITY","age","AGE")]
+# icu_infor<-icu_infor[icu_infor$LOS>3,]
+# comb_for_age_mortality_icu<-inner_join(icu_infor,comb_for_age_mortality,by=c("SUBJECT_ID","HADM_ID"))
+```
+
+                                        
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+# comb_for_age_mortality_icu1<-comb_for_age_mortality_icu[duplicated(comb_for_age_mortality_icu$SUBJECT_ID),]
+# comb_for_age_mortality_icu1<-comb_for_age_mortality_icu[comb_for_age_mortality_icu$SUBJECT_ID %in% comb_for_age_mortality_icu1$SUBJECT_ID,]
+# comb_for_age_mortality_icu2<-comb_for_age_mortality_icu1[duplicated(comb_for_age_mortality_icu1$HADM_ID),]
+# comb_for_age_mortality_icu2<-comb_for_age_mortality_icu1[comb_for_age_mortality_icu1$HADM_ID %in% comb_for_age_mortality_icu2$HADM_ID,]
+# 
+# comb_for_age_mortality_icu2<-comb_for_age_mortality_icu2[!duplicated(comb_for_age_mortality_icu2$ICUSTAY_ID),]
+# comb_for_age_mortality_icu_need<-comb_for_age_mortality_icu2[!duplicated(comb_for_age_mortality_icu2$SUBJECT_ID),]
+# comb_for_age_mortality_icu_no_need<-comb_for_age_mortality_icu2[duplicated(comb_for_age_mortality_icu2$SUBJECT_ID),]
+# comb <- anti_join(comb_for_age_mortality_icu , comb_for_age_mortality_icu_no_need)
+# comb
+```
+
+
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+aki <- read.csv("~/data_mimic/MIMIC_RAW_CSV/aki.csv")
+#aki <- aki[complete.cases(aki), ]
+patientss <- read.csv("~/data_mimic/MIMIC_RAW_CSV/PATIENTS.csv")
+#patientss <- patientss[complete.cases(patientss), ]
+admissionss <- read.csv("~/data_mimic/MIMIC_RAW_CSV/ADMISSIONS.csv")
+#admissionss <- admissionss[complete.cases(admissionss), ]
+icus <- read.csv("~/data_mimic/MIMIC_RAW_CSV/ICUSTAYS.csv")
+#icus <- icus[complete.cases(icus), ]
+```
+
+
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+dob_genderss <- patientss[, c("SUBJECT_ID", "GENDER", "DOB")]
+race_death <- admissionss[, c("SUBJECT_ID", "HADM_ID", "ETHNICITY", "DEATHTIME")]
+unit_los <- icus[, c("SUBJECT_ID", "HADM_ID", "ICUSTAY_ID", "FIRST_CAREUNIT", "INTIME", "LOS")]
+akis <- aki[, c("SUBJECT_ID", "HADM_ID")]
+```
+
+
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+race_death$ETHNICITY <- fct_collapse(race_death$ETHNICITY,
+                                     White = c(levels(race_death$ETHNICITY)[37:41]),
+                                     Black = c(levels(race_death$ETHNICITY)[13:16]),
+                                     Asian = c(levels(race_death$ETHNICITY)[3:12]),
+                                     Other = c(levels(race_death$ETHNICITY)[c(1:2, 17, 28:33, 35:36)]),
+                                     Hispanic=c(levels(race_death$ETHNICITY)[c(18:27, 34)]))
+dob_genderss <- dob_genderss[!duplicated(dob_genderss[, "SUBJECT_ID"]), ]
+unit_los <- unit_los[unit_los$LOS >= 3, ]
+first_tables <- inner_join(akis, dob_genderss, by = "SUBJECT_ID") %>%
+                inner_join(., race_death, by = c("HADM_ID", "SUBJECT_ID")) %>%
+                inner_join(., unit_los, by = c("HADM_ID", "SUBJECT_ID"))
+
+birth_dates <- ymd_hms(first_tables$DOB)
+in_times <- ymd_hms(first_tables$INTIME)
+first_tables$AGE  <- round((difftime(in_times, birth_dates, units="days")) / 365.242)
+first_tables$AGE <- as.numeric(first_tables$AGE)
+first_tables$AGE <- ifelse(first_tables$AGE<40, "40-",
+                    ifelse(first_tables$AGE>39 & first_tables$AGE<60, "40-59",
+                    ifelse(first_tables$AGE>59 & first_tables$AGE<70, "60-69",
+                    ifelse(first_tables$AGE>69 & first_tables$AGE<75, "70-74",
+                    ifelse(first_tables$AGE>74 & first_tables$AGE<80, "75-79",
+                    ifelse(first_tables$AGE>79, "80+",
+                    NA))))))
+first_tables$AGE <- as.factor(first_tables$AGE)
+
+death_timess <- ymd_hms(first_tables$DEATHTIME)
+mort_time <- (death_timess - in_times)
+first_tables$MORTALITY_TIME <- mort_time
+first_tables = within(first_tables, {MORTALITY = ifelse(MORTALITY_TIME > 0, 1, 0)})
+first_tables$MORTALITY[is.na(first_tables$MORTALITY)] <- 0
+first_tables <- first_tables[!duplicated(first_tables[, "ICUSTAY_ID"]), ]
+first_tables$DOB <- NULL
+first_tables$DEATHTIME <- NULL
+#first_tables$INTIME <- NULL
+
+find_same1 <- first_tables[duplicated(first_tables[, "SUBJECT_ID"]), ]
+find_same1 <- first_tables[first_tables$SUBJECT_ID %in% find_same1$SUBJECT_ID, ]
+find_same2 <- find_same1[duplicated(find_same1[, "HADM_ID"]), ]
+find_same2 <- find_same1[find_same1$HADM_ID %in% find_same2$HADM_ID, ]
+find_same3 <- find_same2[duplicated(find_same2[, "HADM_ID"]), ]
+first_tables <- anti_join(first_tables, find_same3, by = c("SUBJECT_ID", "HADM_ID", "ICUSTAY_ID"))
+first_tables
+careunit <- first_tables
+#first_tables[match(find_same$ICUSTAY_ID, first_tables$ICUSTAY_ID), ] <- find_same
+# find_same1 <- find_same[!complete.cases(find_same), ]
+# find_same1 <- find_same1[!duplicated(find_same1[, "HADM_ID"]), ]
+# find_same2 <- find_same[complete.cases(find_same), ]
+# for (i in (1:nrow(find_same2))) {
+#   if ((find_same2[i,10]+0.5) < ymd_hms(find_same2[i,6]) - ymd_hms(find_same2[i,9])) {
+#     find_same2[i,6] <- NA
+#     find_same2[i,12] <- NA
+#     find_same2[i, 13] <- NA
+#   }
+# }
+# first_tables[match(find_same1$ICUSTAY_ID, first_tables1$ICUSTAY_ID), ] <- find_same1
+# first_tables[match(find_same2$ICUSTAY_ID, first_tables$ICUSTAY_ID), ] <- find_same2
+```
+
+
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+ICD<-read.csv("~/data_mimic/MIMIC_RAW_CSV/DIAGNOSES_ICD.csv")
+ICD<-ICD[complete.cases(ICD),]
+COM<-ICD[,c("SUBJECT_ID","HADM_ID","ICD9_CODE")]
+wbc_count<-read.csv("~/data_mimic/MIMIC_RAW_CSV/wbc_count.csv")
+wbc_count<-wbc_count[complete.cases(wbc_count),]
+wbc<-wbc_count[,c("SUBJECT_ID","HADM_ID","CHARTTIME","VALUENUM")]
+wbc<-wbc[(wbc$SUBJECT_ID %in% first_tables$SUBJECT_ID) & (wbc$HADM_ID %in% first_tables$HADM_ID), ]
+aci_count<-read.csv("~/data_mimic/MIMIC_RAW_CSV/acidosis.csv")
+aci_count<-aci_count[complete.cases(aci_count),]
+aci<-aci_count[,c("subject_id","hadm_id","charttime","valuenum","valueuom")]
+aci<-aci[(aci$subject_id %in% first_tables$SUBJECT_ID) & (aci$hadm_id %in% first_tables$HADM_ID), ]
+names(aci)<-c("SUBJECT_ID","HADM_ID","CHARTTIME","VALUENUM","VALUEUOM")
+```
+
+
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+wbc_comb<-full_join(wbc,first_tables,by=c("HADM_ID","SUBJECT_ID"))
+INTIME<-ymd_hms(wbc_comb$INTIME)
+CHARTTIME<-ymd_hms(wbc_comb$CHARTTIME)
+wbc_comb$INTIME_LENGTH<-(CHARTTIME-INTIME)
+
+wbc_comb$wbc_score <- ifelse(wbc_comb$VALUENUM <=15, 0,1)
+wbc_comb$wbc_day <- ifelse(wbc_comb$INTIME_LENGTH>0 & wbc_comb$INTIME_LENGTH<=86400,1,
+           ifelse(wbc_comb$INTIME_LENGTH>86400 & wbc_comb$INTIME_LENGTH<=172800,2,
+           ifelse(wbc_comb$INTIME_LENGTH>172800 & wbc_comb$INTIME_LENGTH<=259200,3,
+                  NA)))
+wbc_comb<-wbc_comb[,c("SUBJECT_ID","HADM_ID","CHARTTIME","ICUSTAY_ID","LOS","INTIME","MORTALITY","AGE","wbc_score","wbc_day")]
+
+DAY1_wbc<-wbc_comb[wbc_comb$wbc_day==1 & is.na(wbc_comb$wbc_day)==FALSE,]
+DAY1_wbc<-DAY1_wbc[,c("SUBJECT_ID","HADM_ID","ICUSTAY_ID","wbc_day","wbc_score")]
+
+DAY2_wbc<-wbc_comb[wbc_comb$wbc_day==2 & is.na(wbc_comb$wbc_day)==FALSE,]
+DAY2_wbc<-DAY2_wbc[,c("SUBJECT_ID","HADM_ID","ICUSTAY_ID","wbc_day","wbc_score")]
+
+DAY3_wbc<-wbc_comb[wbc_comb$wbc_day==3 & is.na(wbc_comb$wbc_day)==FALSE,]
+DAY3_wbc<-DAY3_wbc[,c("SUBJECT_ID","HADM_ID","ICUSTAY_ID","wbc_day","wbc_score")]
+```
+
+
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+aci_comb<-full_join(aci,first_tables,by=c("HADM_ID","SUBJECT_ID"))
+INTIME<-ymd_hms(aci_comb$INTIME)
+CHARTTIME<-ymd_hms(aci_comb$CHARTTIME)
+aci_comb$INTIME_LENGTH<-(CHARTTIME-INTIME)
+
+aci_comb$aci_score<-c(0)
+aci_comb$aci_score <- ifelse(aci_comb$VALUEUOM=="units" & aci_comb$VALUENUM<7.2,1,
+           ifelse(aci_comb$VALUEUOM=="units" & aci_comb$VALUENUM>=7.2,0,
+           ifelse(aci_comb$VALUEUOM=="mEq/L" & aci_comb$VALUENUM<18,3,
+           ifelse(aci_comb$VALUEUOM=="mEq/L" & aci_comb$VALUENUM>=18,4,
+                  NA))))
+aci_comb$aci_day <- ifelse(aci_comb$INTIME_LENGTH>0 & aci_comb$INTIME_LENGTH<=86400,1,
+           ifelse(aci_comb$INTIME_LENGTH>86400 & aci_comb$INTIME_LENGTH<=172800,2,
+           ifelse(aci_comb$INTIME_LENGTH>172800 & aci_comb$INTIME_LENGTH<=259200,3,
+                  NA)))
+aci_comb<-aci_comb[,c("SUBJECT_ID","HADM_ID","CHARTTIME","ICUSTAY_ID","LOS","INTIME","MORTALITY","AGE","aci_score","aci_day")]
+```
+
+
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+DAY1<-aci_comb[aci_comb$aci_day==1 & is.na(aci_comb$aci_day)==FALSE,]
+DAY1_1<-DAY1 %>% group_by(SUBJECT_ID,aci_score) %>%filter(row_number() == 1) %>%ungroup()
+DAY1_1<-DAY1_1[DAY1_1$aci_score ==3| DAY1_1$aci_score==1 ,]
+DAY11<-aggregate(DAY1_1[,9],by=list(SUBJECT_ID=DAY1_1$SUBJECT_ID),FUN=sum)
+DAY11$aci_score_last <- ifelse(DAY11$aci_score==4,1,0)
+DAY1_last<-full_join(DAY11,DAY1,by="SUBJECT_ID")
+DAY1_last<-DAY1_last[,c("SUBJECT_ID","HADM_ID","ICUSTAY_ID","aci_day","aci_score_last")]
+DAY1_last<-DAY1_last[order(DAY1_last$SUBJECT_ID),,drop=FALSE]
+DAY1_last$aci_score_last[is.na(DAY1_last$aci_score_last)] <- 0
+
+DAY2<-aci_comb[aci_comb$aci_day==2 & is.na(aci_comb$aci_day)==FALSE,]
+DAY2_1<-DAY2 %>% group_by(SUBJECT_ID,aci_score) %>%filter(row_number() == 1) %>%ungroup()
+DAY2_1<-DAY2_1[DAY2_1$aci_score ==3| DAY2_1$aci_score==1 ,]
+DAY21<-aggregate(DAY2_1[,9],by=list(SUBJECT_ID=DAY2_1$SUBJECT_ID),FUN=sum)
+DAY21$aci_score_last <- ifelse(DAY21$aci_score==4,1,0)
+DAY2_last<-full_join(DAY21,DAY2,by="SUBJECT_ID")
+DAY2_last<-DAY2_last[,c("SUBJECT_ID","HADM_ID","ICUSTAY_ID","aci_day","aci_score_last")]
+DAY2_last<-DAY2_last[order(DAY2_last$SUBJECT_ID),,drop=FALSE]
+DAY2_last$aci_score_last[is.na(DAY2_last$aci_score_last)] <- 0
+
+DAY3<-aci_comb[aci_comb$aci_day==3 & is.na(aci_comb$aci_day)==FALSE,]
+DAY3_1<-DAY3 %>% group_by(SUBJECT_ID,aci_score) %>%filter(row_number() == 1) %>%ungroup()
+DAY3_1<-DAY3_1[DAY3_1$aci_score ==3| DAY3_1$aci_score==1 ,]
+DAY31<-aggregate(DAY3_1[,9],by=list(SUBJECT_ID=DAY3_1$SUBJECT_ID),FUN=sum)
+DAY31$aci_score_last <- ifelse(DAY31$aci_score==4,1,0)
+DAY3_last<-full_join(DAY31,DAY3,by="SUBJECT_ID")
+DAY3_last<-DAY3_last[,c("SUBJECT_ID","HADM_ID","ICUSTAY_ID","aci_day","aci_score_last")]
+DAY3_last<-DAY3_last[order(DAY3_last$SUBJECT_ID),,drop=FALSE]
+DAY3_last$aci_score_last[is.na(DAY3_last$aci_score_last)] <- 0
+```
+
+
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+urine_first_day<-read.csv("~/data_mimic/MIMIC_RAW_CSV/urine_first_day.csv")
+urine_first_day<-urine_first_day[complete.cases(urine_first_day),]
+urine_first_day<-urine_first_day[(urine_first_day$subject_id %in% first_tables$SUBJECT_ID) & (urine_first_day$hadm_id %in% first_tables$HADM_ID), ]
+names(urine_first_day)<-c("SUBJECT_ID","HADM_ID","ICUSTAY_ID","URINEOUTPUT")
+urine_first_day$urine_day<-c(1)
+urine_first_day$urine_score<-ifelse(urine_first_day$URINEOUTPUT<400,1,0)
+
+urine_second_day<-read.csv("~/data_mimic/MIMIC_RAW_CSV/urine_second_day.csv")
+urine_second_day<-urine_second_day[complete.cases(urine_second_day),]
+urine_second_day<-urine_second_day[(urine_second_day$subject_id %in% first_tables$SUBJECT_ID) & (urine_second_day$hadm_id %in% first_tables$HADM_ID), ]
+names(urine_second_day)<-c("SUBJECT_ID","HADM_ID","ICUSTAY_ID","URINEOUTPUT")
+urine_second_day$urine_day<-c(2)
+urine_second_day$urine_score<-ifelse(urine_second_day$URINEOUTPUT<400,1,0)
+
+urine_third_day<-read.csv("~/data_mimic/MIMIC_RAW_CSV/urine_third_day.csv")
+urine_third_day<-urine_third_day[complete.cases(urine_third_day),]
+urine_third_day<-urine_third_day[(urine_third_day$subject_id %in% first_tables$SUBJECT_ID) & (urine_third_day$hadm_id %in% first_tables$HADM_ID), ]
+names(urine_third_day)<-c("SUBJECT_ID","HADM_ID","ICUSTAY_ID","URINEOUTPUT")
+urine_third_day$urine_day<-c(3)
+urine_third_day$urine_score<-ifelse(urine_third_day$URINEOUTPUT<400,1,0)
+```
+
+
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+saps1<-read.csv("~/data_mimic/MIMIC_RAW_CSV/sapsii_first_day.csv")
+saps1<-saps1[complete.cases(saps1),]
+saps1<-saps1[(saps1$subject_id %in% first_tables$SUBJECT_ID) & (saps1$hadm_id %in% first_tables$HADM_ID), ]
+saps11<-saps1[,c("subject_id","hadm_id","icustay_id","sysbp_score","hr_score","temp_score","bun_score","potassium_score","sodium_score","bilirubin_score","age_score")]
+names(saps11)<-c("SUBJECT_ID","HADM_ID","ICUSTAY_ID","sysbp_score","hr_score","temp_score","bun_score","potassium_score","sodium_score","bilirubin_score","age_score")
+saps11<-saps11[order(saps11$SUBJECT_ID),,drop=FALSE]
+
+saps2<-read.csv("~/data_mimic/MIMIC_RAW_CSV/sapsii_second_day.csv")
+saps2<-saps2[complete.cases(saps2),]
+saps2<-saps2[(saps2$subject_id %in% first_tables$SUBJECT_ID) & (saps2$hadm_id %in% first_tables$HADM_ID), ]
+saps21<-saps2[,c("subject_id","hadm_id","icustay_id","sysbp_score","hr_score","temp_score","bun_score","potassium_score","sodium_score","bilirubin_score","age_score")]
+names(saps21)<-c("SUBJECT_ID","HADM_ID","ICUSTAY_ID","sysbp_score","hr_score","temp_score","bun_score","potassium_score","sodium_score","bilirubin_score","age_score")
+saps21<-saps21[order(saps21$SUBJECT_ID),,drop=FALSE]
+
+saps3<-read.csv("~/data_mimic/MIMIC_RAW_CSV/sapsii_third_day.csv")
+saps3<-saps3[complete.cases(saps3),]
+saps3<-saps3[(saps3$subject_id %in% first_tables$SUBJECT_ID) & (saps3$hadm_id %in% first_tables$HADM_ID), ]
+saps31<-saps3[,c("subject_id","hadm_id","icustay_id","sysbp_score","hr_score","temp_score","bun_score","potassium_score","sodium_score","bilirubin_score","age_score")]
+names(saps31)<-c("SUBJECT_ID","HADM_ID","ICUSTAY_ID","sysbp_score","hr_score","temp_score","bun_score","potassium_score","sodium_score","bilirubin_score","age_score")
+saps31<-saps31[order(saps31$SUBJECT_ID),,drop=FALSE]
+```
+
+
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+first_tables<-first_tables[order(first_tables$SUBJECT_ID),,drop=FALSE]
+first_tables<-first_tables[,c("SUBJECT_ID","HADM_ID","ICUSTAY_ID","MORTALITY","AGE")]
+
+DAY1_wbc_last<-aggregate(DAY1_wbc[,5],by=list(SUBJECT_ID=DAY1_wbc$SUBJECT_ID,HADM_ID=DAY1_wbc$HADM_ID,ICUSTAY_ID=DAY1_wbc$ICUSTAY_ID),FUN=max)
+DAY1_wbc_last<-DAY1_wbc_last[order(DAY1_wbc_last$SUBJECT_ID),,drop=FALSE]
+names(DAY1_wbc_last)[names(DAY1_wbc_last)=="x"]="wbc_score"
+DAY2_wbc_last<-aggregate(DAY2_wbc[,5],by=list(SUBJECT_ID=DAY2_wbc$SUBJECT_ID,HADM_ID=DAY2_wbc$HADM_ID,ICUSTAY_ID=DAY2_wbc$ICUSTAY_ID),FUN=max)
+DAY2_wbc_last<-DAY2_wbc_last[order(DAY2_wbc_last$SUBJECT_ID),,drop=FALSE]
+names(DAY2_wbc_last)[names(DAY2_wbc_last)=="x"]="wbc_score"
+DAY3_wbc_last<-aggregate(DAY3_wbc[,5],by=list(SUBJECT_ID=DAY3_wbc$SUBJECT_ID,HADM_ID=DAY3_wbc$HADM_ID,ICUSTAY_ID=DAY3_wbc$ICUSTAY_ID),FUN=max)
+DAY3_wbc_last<-DAY3_wbc_last[order(DAY3_wbc_last$SUBJECT_ID),,drop=FALSE]
+names(DAY3_wbc_last)[names(DAY3_wbc_last)=="x"]="wbc_score"
+
+DAY1_aci_last<-aggregate(DAY1_last[,5],by=list(SUBJECT_ID=DAY1_last$SUBJECT_ID,HADM_ID=DAY1_last$HADM_ID,ICUSTAY_ID=DAY1_last$ICUSTAY_ID),FUN=max)
+DAY1_aci_last<-DAY1_aci_last[order(DAY1_aci_last$SUBJECT_ID),,drop=FALSE]
+names(DAY1_aci_last)[names(DAY1_aci_last)=="x"]="aci_score"
+DAY2_aci_last<-aggregate(DAY2_last[,5],by=list(SUBJECT_ID=DAY2_last$SUBJECT_ID,HADM_ID=DAY2_last$HADM_ID,ICUSTAY_ID=DAY2_last$ICUSTAY_ID),FUN=max)
+DAY2_aci_last<-DAY2_aci_last[order(DAY2_aci_last$SUBJECT_ID),,drop=FALSE]
+names(DAY2_aci_last)[names(DAY2_aci_last)=="x"]="aci_score"
+DAY3_aci_last<-aggregate(DAY3_last[,5],by=list(SUBJECT_ID=DAY3_last$SUBJECT_ID,HADM_ID=DAY3_last$HADM_ID,ICUSTAY_ID=DAY3_last$ICUSTAY_ID),FUN=max)
+DAY3_aci_last<-DAY3_aci_last[order(DAY3_aci_last$SUBJECT_ID),,drop=FALSE]
+names(DAY3_aci_last)[names(DAY3_aci_last)=="x"]="aci_score"
+
+urine_first_day<-urine_first_day[,c("SUBJECT_ID","HADM_ID","ICUSTAY_ID","urine_score")]
+urine_second_day<-urine_first_day[,c("SUBJECT_ID","HADM_ID","ICUSTAY_ID","urine_score")]
+urine_third_day<-urine_first_day[,c("SUBJECT_ID","HADM_ID","ICUSTAY_ID","urine_score")]
+
+DAY1_wbc_aci_comb<-full_join(DAY1_wbc_last,DAY1_aci_last,by=c("HADM_ID","SUBJECT_ID","ICUSTAY_ID"))
+DAY1_urine_saps11<-full_join(urine_first_day,saps11,by=c("HADM_ID","SUBJECT_ID","ICUSTAY_ID"))
+DAY1<-full_join(DAY1_wbc_aci_comb,DAY1_urine_saps11,by=c("HADM_ID","SUBJECT_ID","ICUSTAY_ID"))
+DAY1$CHARTDAY<-c(1)
+DAY2_wbc_aci_comb<-full_join(DAY2_wbc_last,DAY2_aci_last,by=c("HADM_ID","SUBJECT_ID","ICUSTAY_ID"))
+DAY2_urine_saps21<-full_join(urine_second_day,saps21,by=c("HADM_ID","SUBJECT_ID","ICUSTAY_ID"))
+DAY2<-full_join(DAY2_wbc_aci_comb,DAY2_urine_saps21,by=c("HADM_ID","SUBJECT_ID","ICUSTAY_ID"))
+DAY2$CHARTDAY<-c(2)
+DAY3_wbc_aci_comb<-full_join(DAY3_wbc_last,DAY3_aci_last,by=c("HADM_ID","SUBJECT_ID","ICUSTAY_ID"))
+DAY3_urine_saps31<-full_join(urine_third_day,saps31,by=c("HADM_ID","SUBJECT_ID","ICUSTAY_ID"))
+DAY3<-full_join(DAY3_wbc_aci_comb,DAY3_urine_saps31,by=c("HADM_ID","SUBJECT_ID","ICUSTAY_ID"))
+DAY3$CHARTDAY<-c(3)
+DAY<-rbind(DAY1,DAY2,DAY3)
+
+first_tables<-full_join(first_tables,DAY,by=c("SUBJECT_ID","HADM_ID","ICUSTAY_ID"))
+final_tables<-first_tables[is.na(first_tables$CHARTDAY) == FALSE, ]
+final_tables
+```
+
+
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+freq_table <- count(final_tables$ICUSTAY_ID)
+freq_table1 <- freq_table[freq_table$freq == 1 | freq_table$freq == 2 | freq_table$freq == 4 | freq_table$freq == 5
+                          | freq_table$freq == 7 | freq_table$freq == 8, ]
+final_tables <- final_tables[!(final_tables$ICUSTAY_ID %in% freq_table1$x),]
+final_tables <- final_tables[1:12869, ]
+freq_table1 <- count(final_tables$HADM_ID)
+freq_table1 <- freq_table1[!(freq_table1$freq == 3),]
+freq_table2 <- final_tables[final_tables$HADM_ID %in% freq_table1$x, ]
+freq_table2 <- freq_table2[order(freq_table2$SUBJECT_ID), , drop=FALSE]
+remove_ids <- freq_table2[c(4,8,12,16,17,21,25,29,33,37,41,42,46,47,51,52,53,57,61,65,69,73,77,81,85,89,93,97,
+                            101,105,109,113,117,121,125), ]
+final_tables <- final_tables[!(final_tables$SUBJECT_ID %in% remove_ids$SUBJECT_ID), ]
+final_tables
+# miss_wbc <- aggregate(final_tables[6], by = list(final_tables$SUBJECT_ID, final_tables$HADM_ID), max, na.rm=TRUE)
+# miss_wbc <- miss_wbc[order(miss_wbc$Group.1), , drop=FALSE]
+# miss_wbc_all <- miss_wbc[is.na(miss_wbc$wbc_score) == TRUE, ]
+# 
+# miss_aci <- aggregate(final_tables[7], by = list(final_tables$SUBJECT_ID, final_tables$HADM_ID), max, na.rm=TRUE)
+# miss_aci <- miss_aci[order(miss_aci$Group.1), , drop=FALSE]
+# miss_aci_all <- miss_aci[is.na(miss_aci$wbc_score) == TRUE, ]
+# 
+# miss_urine <- aggregate(final_tables[8], by = list(final_tables$SUBJECT_ID, final_tables$HADM_ID), max, na.rm=TRUE)
+# miss_urine <- miss_urine[order(miss_urine$Group.1), , drop=FALSE]
+# miss_urine
+# miss_urine_all <- miss_urine[is.na(miss_urine$wbc_score) == TRUE, ]
+# miss_urine_all
+```
+
+
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+final_first <- final_tables[final_tables$CHARTDAY == 1, ]
+colnames(final_first)[6:16] <- c("wbc_score_1", "aci_score_1", "urine_score_1", "sysbp_score_1", "hr_score_1", "temp_score_1",
+                                 "bun_score_1", "potassium_score_1", "sodium_score_1", "bilirubin_score_1", "age_score_1")
+final_second <- final_tables[final_tables$CHARTDAY == 2, ]
+colnames(final_second)[6:16] <- c("wbc_score_2", "aci_score_2", "urine_score_2", "sysbp_score_2", "hr_score_2", "temp_score_2",
+                                 "bun_score_2", "potassium_score_2", "sodium_score_2", "bilirubin_score_2", "age_score_2")
+final_third <- final_tables[final_tables$CHARTDAY == 3, ]
+colnames(final_third)[6:16] <- c("wbc_score_3", "aci_score_3", "urine_score_3", "sysbp_score_3", "hr_score_3", "temp_score_3",
+                                 "bun_score_3", "potassium_score_3", "sodium_score_3", "bilirubin_score_3", "age_score_3")
+final_tabless <- cbind(final_first, final_second[6:16], final_third[6:16])
+final_tabless
+```
+
+-wbc
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+wbc_miss_all <- final_tabless[is.na(final_tabless$wbc_score_1) == TRUE & is.na(final_tabless$wbc_score_2) == TRUE &
+                              is.na(final_tabless$wbc_score_3) == TRUE, ]
+wbc_middle <- median(final_tables$wbc_score, na.rm=TRUE)   
+wbc_miss_all$wbc_score_1[is.na(wbc_miss_all$wbc_score_1)] <- wbc_middle
+wbc_miss_all$wbc_score_2[is.na(wbc_miss_all$wbc_score_2)] <- wbc_middle
+wbc_miss_all$wbc_score_3[is.na(wbc_miss_all$wbc_score_3)] <- wbc_middle
+final_tabless[match(wbc_miss_all$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- wbc_miss_all
+
+wbc_miss_second <- final_tabless[is.na(final_tabless$wbc_score_2) == TRUE & is.na(final_tabless$wbc_score_1) == FALSE &
+                                 is.na(final_tabless$wbc_score_3) == FALSE, ]
+wbc_miss_second$wbc_score_2 <- rowMeans(wbc_miss_second[, c(6,29)])
+final_tabless[match(wbc_miss_second$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- wbc_miss_second
+
+wbc_miss_first <- final_tabless[is.na(final_tabless$wbc_score_1) == TRUE & is.na(final_tabless$wbc_score_2) == FALSE &
+                                is.na(final_tabless$wbc_score_3) == FALSE, ]
+wbc_miss_first$wbc_score_1 <- wbc_miss_first$wbc_score_2
+final_tabless[match(wbc_miss_first$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- wbc_miss_first
+
+wbc_miss_third <- final_tabless[is.na(final_tabless$wbc_score_1) == FALSE & is.na(final_tabless$wbc_score_2) == FALSE &
+                                is.na(final_tabless$wbc_score_3) == TRUE, ]
+wbc_miss_third$wbc_score_3 <- wbc_miss_third$wbc_score_2
+final_tabless[match(wbc_miss_third$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- wbc_miss_third
+
+wbc_miss_23 <- final_tabless[is.na(final_tabless$wbc_score_1) == FALSE & is.na(final_tabless$wbc_score_2) == TRUE &
+                             is.na(final_tabless$wbc_score_3) == TRUE, ]
+wbc_miss_23$wbc_score_2 <- wbc_miss_23$wbc_score_1
+wbc_miss_23$wbc_score_3 <- wbc_miss_23$wbc_score_1
+final_tabless[match(wbc_miss_23$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- wbc_miss_23
+
+wbc_miss_13 <- final_tabless[is.na(final_tabless$wbc_score_1) == TRUE & is.na(final_tabless$wbc_score_2) == FALSE &
+                             is.na(final_tabless$wbc_score_3) == TRUE, ]
+wbc_miss_13$wbc_score_1 <- wbc_miss_13$wbc_score_2
+wbc_miss_13$wbc_score_3 <- wbc_miss_13$wbc_score_2
+final_tabless[match(wbc_miss_13$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- wbc_miss_13
+
+wbc_miss_12 <- final_tabless[is.na(final_tabless$wbc_score_1) == TRUE & is.na(final_tabless$wbc_score_2) == TRUE &
+                             is.na(final_tabless$wbc_score_3) == FALSE, ]
+wbc_miss_12$wbc_score_1 <- wbc_miss_12$wbc_score_3
+wbc_miss_12$wbc_score_2 <- wbc_miss_12$wbc_score_3
+final_tabless[match(wbc_miss_12$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- wbc_miss_12
+
+final_tabless
+```
+
+-aci
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+aci_miss_all <- final_tabless[is.na(final_tabless$aci_score_1) == TRUE & is.na(final_tabless$aci_score_2) == TRUE &
+                              is.na(final_tabless$aci_score_3) == TRUE, ]
+aci_middle <- median(final_tables$aci_score, na.rm=TRUE) 
+aci_miss_all$aci_score_1[is.na(aci_miss_all$aci_score_1)] <- aci_middle
+aci_miss_all$aci_score_2[is.na(aci_miss_all$aci_score_2)] <- aci_middle
+aci_miss_all$aci_score_3[is.na(aci_miss_all$aci_score_3)] <- aci_middle
+final_tabless[match(aci_miss_all$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- aci_miss_all
+
+aci_miss_second <- final_tabless[is.na(final_tabless$aci_score_2) == TRUE & is.na(final_tabless$aci_score_1) == FALSE &
+                                 is.na(final_tabless$aci_score_3) == FALSE, ]
+aci_miss_second$aci_score_2 <- rowMeans(aci_miss_second[, c(7,30)])
+final_tabless[match(aci_miss_second$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- aci_miss_second
+
+aci_miss_first <- final_tabless[is.na(final_tabless$aci_score_1) == TRUE & is.na(final_tabless$aci_score_2) == FALSE &
+                                is.na(final_tabless$aci_score_3) == FALSE, ]
+aci_miss_first$aci_score_1 <- aci_miss_first$aci_score_2
+final_tabless[match(aci_miss_first$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- aci_miss_first
+
+aci_miss_third <- final_tabless[is.na(final_tabless$aci_score_1) == FALSE & is.na(final_tabless$aci_score_2) == FALSE &
+                                is.na(final_tabless$aci_score_3) == TRUE, ]
+aci_miss_third$aci_score_3 <- aci_miss_third$aci_score_2
+final_tabless[match(aci_miss_third$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- aci_miss_third
+
+aci_miss_23 <- final_tabless[is.na(final_tabless$aci_score_1) == FALSE & is.na(final_tabless$aci_score_2) == TRUE &
+                             is.na(final_tabless$aci_score_3) == TRUE, ]
+aci_miss_23$aci_score_2 <- aci_miss_23$aci_score_1
+aci_miss_23$aci_score_3 <- aci_miss_23$aci_score_1
+final_tabless[match(aci_miss_23$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- aci_miss_23
+
+aci_miss_13 <- final_tabless[is.na(final_tabless$aci_score_1) == TRUE & is.na(final_tabless$aci_score_2) == FALSE &
+                             is.na(final_tabless$aci_score_3) == TRUE, ]
+aci_miss_13$aci_score_1 <- aci_miss_13$aci_score_2
+aci_miss_13$aci_score_3 <- aci_miss_13$aci_score_2
+final_tabless[match(aci_miss_13$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- aci_miss_13
+
+aci_miss_12 <- final_tabless[is.na(final_tabless$aci_score_1) == TRUE & is.na(final_tabless$aci_score_2) == TRUE &
+                             is.na(final_tabless$aci_score_3) == FALSE, ]
+aci_miss_12$aci_score_1 <- aci_miss_12$aci_score_3
+aci_miss_12$aci_score_2 <- aci_miss_12$aci_score_3
+final_tabless[match(aci_miss_12$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- aci_miss_12
+
+final_tabless
+```
+
+-urine
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+urine_miss_all <- final_tabless[is.na(final_tabless$urine_score_1) == TRUE & is.na(final_tabless$urine_score_2) == TRUE &
+                                is.na(final_tabless$urine_score_3) == TRUE, ]
+urine_middle <- median(final_tables$urine_score, na.rm=TRUE) 
+urine_miss_all$urine_score_1[is.na(urine_miss_all$urine_score_1)] <- urine_middle
+urine_miss_all$urine_score_2[is.na(urine_miss_all$urine_score_2)] <- urine_middle
+urine_miss_all$urine_score_3[is.na(urine_miss_all$urine_score_3)] <- urine_middle
+final_tabless[match(urine_miss_all$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- urine_miss_all
+
+urine_miss_second <- final_tabless[is.na(final_tabless$urine_score_2) == TRUE & is.na(final_tabless$urine_score_1) == FALSE &
+                                   is.na(final_tabless$urine_score_3) == FALSE, ]
+urine_miss_second$urine_score_2 <- rowMeans(urine_miss_second[, c(8,31)])
+final_tabless[match(urine_miss_second$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- urine_miss_second
+
+urine_miss_first <- final_tabless[is.na(final_tabless$urine_score_1) == TRUE & is.na(final_tabless$urine_score_2) == FALSE &
+                                  is.na(final_tabless$urine_score_3) == FALSE, ]
+urine_miss_first$urine_score_1 <- urine_miss_first$urine_score_2
+final_tabless[match(urine_miss_first$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- urine_miss_first
+
+urine_miss_third <- final_tabless[is.na(final_tabless$urine_score_1) == FALSE & is.na(final_tabless$urine_score_2) == FALSE &
+                                  is.na(final_tabless$urine_score_3) == TRUE, ]
+urine_miss_third$urine_score_3 <- urine_miss_third$urine_score_2
+final_tabless[match(urine_miss_third$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- urine_miss_third
+
+urine_miss_23 <- final_tabless[is.na(final_tabless$urine_score_1) == FALSE & is.na(final_tabless$urine_score_2) == TRUE &
+                               is.na(final_tabless$urine_score_3) == TRUE, ]
+urine_miss_23$urine_score_2 <- urine_miss_23$urine_score_1
+urine_miss_23$urine_score_3 <- urine_miss_23$urine_score_1
+final_tabless[match(urine_miss_23$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- urine_miss_23
+
+urine_miss_13 <- final_tabless[is.na(final_tabless$urine_score_1) == TRUE & is.na(final_tabless$urine_score_2) == FALSE &
+                               is.na(final_tabless$urine_score_3) == TRUE, ]
+urine_miss_13$urine_score_1 <- urine_miss_13$urine_score_2
+urine_miss_13$urine_score_3 <- urine_miss_13$urine_score_2
+final_tabless[match(urine_miss_13$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- urine_miss_13
+
+urine_miss_12 <- final_tabless[is.na(final_tabless$urine_score_1) == TRUE & is.na(final_tabless$urine_score_2) == TRUE &
+                               is.na(final_tabless$urine_score_3) == FALSE, ]
+urine_miss_12$urine_score_1 <- urine_miss_12$urine_score_3
+urine_miss_12$urine_score_2 <- urine_miss_12$urine_score_3
+final_tabless[match(urine_miss_12$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- urine_miss_12
+
+final_tabless
+```
+
+-sysbp
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+sysbp_miss_all <- final_tabless[is.na(final_tabless$sysbp_score_1) == TRUE & is.na(final_tabless$sysbp_score_2) == TRUE &
+                                is.na(final_tabless$sysbp_score_3) == TRUE, ]
+sysbp_middle <- median(final_tables$sysbp_score, na.rm=TRUE) 
+sysbp_miss_all$sysbp_score_1[is.na(sysbp_miss_all$sysbp_score_1)] <- sysbp_middle
+sysbp_miss_all$sysbp_score_2[is.na(sysbp_miss_all$sysbp_score_2)] <- sysbp_middle
+sysbp_miss_all$sysbp_score_3[is.na(sysbp_miss_all$sysbp_score_3)] <- sysbp_middle
+final_tabless[match(sysbp_miss_all$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- sysbp_miss_all
+
+sysbp_miss_second <- final_tabless[is.na(final_tabless$sysbp_score_2) == TRUE & is.na(final_tabless$sysbp_score_1) == FALSE &
+                                   is.na(final_tabless$sysbp_score_3) == FALSE, ]
+sysbp_miss_second$sysbp_score_2 <- rowMeans(sysbp_miss_second[, c(9,32)])
+final_tabless[match(sysbp_miss_second$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- sysbp_miss_second
+
+sysbp_miss_first <- final_tabless[is.na(final_tabless$sysbp_score_1) == TRUE & is.na(final_tabless$sysbp_score_2) == FALSE &
+                                  is.na(final_tabless$sysbp_score_3) == FALSE, ]
+sysbp_miss_first$sysbp_score_1 <- sysbp_miss_first$sysbp_score_2
+final_tabless[match(sysbp_miss_first$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- sysbp_miss_first
+
+sysbp_miss_third <- final_tabless[is.na(final_tabless$sysbp_score_1) == FALSE & is.na(final_tabless$sysbp_score_2) == FALSE &
+                                  is.na(final_tabless$sysbp_score_3) == TRUE, ]
+sysbp_miss_third$sysbp_score_3 <- sysbp_miss_third$sysbp_score_2
+final_tabless[match(sysbp_miss_third$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- sysbp_miss_third
+
+sysbp_miss_23 <- final_tabless[is.na(final_tabless$sysbp_score_1) == FALSE & is.na(final_tabless$sysbp_score_2) == TRUE &
+                               is.na(final_tabless$sysbp_score_3) == TRUE, ]
+sysbp_miss_23$sysbp_score_2 <- sysbp_miss_23$sysbp_score_1
+sysbp_miss_23$sysbp_score_3 <- sysbp_miss_23$sysbp_score_1
+final_tabless[match(sysbp_miss_23$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- sysbp_miss_23
+
+sysbp_miss_13 <- final_tabless[is.na(final_tabless$sysbp_score_1) == TRUE & is.na(final_tabless$sysbp_score_2) == FALSE &
+                               is.na(final_tabless$sysbp_score_3) == TRUE, ]
+sysbp_miss_13$sysbp_score_1 <- sysbp_miss_13$sysbp_score_2
+sysbp_miss_13$sysbp_score_3 <- sysbp_miss_13$sysbp_score_2
+final_tabless[match(sysbp_miss_13$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- sysbp_miss_13
+
+sysbp_miss_12 <- final_tabless[is.na(final_tabless$sysbp_score_1) == TRUE & is.na(final_tabless$sysbp_score_2) == TRUE &
+                               is.na(final_tabless$sysbp_score_3) == FALSE, ]
+sysbp_miss_12$sysbp_score_1 <- sysbp_miss_12$sysbp_score_3
+sysbp_miss_12$sysbp_score_2 <- sysbp_miss_12$sysbp_score_3
+final_tabless[match(sysbp_miss_12$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- sysbp_miss_12
+
+final_tabless
+```
+
+-hr
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+hr_miss_all <- final_tabless[is.na(final_tabless$hr_score_1) == TRUE & is.na(final_tabless$hr_score_2) == TRUE &
+                             is.na(final_tabless$hr_score_3) == TRUE, ]
+hr_middle <- median(final_tables$hr_score, na.rm=TRUE) 
+hr_miss_all$hr_score_1[is.na(hr_miss_all$hr_score_1)] <- hr_middle
+hr_miss_all$hr_score_2[is.na(hr_miss_all$hr_score_2)] <- hr_middle
+hr_miss_all$hr_score_3[is.na(hr_miss_all$hr_score_3)] <- hr_middle
+final_tabless[match(hr_miss_all$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- hr_miss_all
+
+hr_miss_second <- final_tabless[is.na(final_tabless$hr_score_2) == TRUE & is.na(final_tabless$hr_score_1) == FALSE &
+                                is.na(final_tabless$hr_score_3) == FALSE, ]
+hr_miss_second$hr_score_2 <- rowMeans(hr_miss_second[, c(10,33)])
+final_tabless[match(hr_miss_second$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- hr_miss_second
+
+hr_miss_first <- final_tabless[is.na(final_tabless$hr_score_1) == TRUE & is.na(final_tabless$hr_score_2) == FALSE &
+                               is.na(final_tabless$hr_score_3) == FALSE, ]
+hr_miss_first$hr_score_1 <- hr_miss_first$hr_score_2
+final_tabless[match(hr_miss_first$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- hr_miss_first
+
+hr_miss_third <- final_tabless[is.na(final_tabless$hr_score_1) == FALSE & is.na(final_tabless$hr_score_2) == FALSE &
+                               is.na(final_tabless$hr_score_3) == TRUE, ]
+hr_miss_third$hr_score_3 <- hr_miss_third$hr_score_2
+final_tabless[match(hr_miss_third$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- hr_miss_third
+
+hr_miss_23 <- final_tabless[is.na(final_tabless$hr_score_1) == FALSE & is.na(final_tabless$hr_score_2) == TRUE &
+                            is.na(final_tabless$hr_score_3) == TRUE, ]
+hr_miss_23$hr_score_2 <- hr_miss_23$hr_score_1
+hr_miss_23$hr_score_3 <- hr_miss_23$hr_score_1
+final_tabless[match(hr_miss_23$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- hr_miss_23
+
+hr_miss_13 <- final_tabless[is.na(final_tabless$hr_score_1) == TRUE & is.na(final_tabless$hr_score_2) == FALSE &
+                            is.na(final_tabless$hr_score_3) == TRUE, ]
+hr_miss_13$hr_score_1 <- hr_miss_13$hr_score_2
+hr_miss_13$hr_score_3 <- hr_miss_13$hr_score_2
+final_tabless[match(hr_miss_13$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- hr_miss_13
+
+hr_miss_12 <- final_tabless[is.na(final_tabless$hr_score_1) == TRUE & is.na(final_tabless$hr_score_2) == TRUE &
+                            is.na(final_tabless$hr_score_3) == FALSE, ]
+hr_miss_12$hr_score_1 <- hr_miss_12$hr_score_3
+hr_miss_12$hr_score_2 <- hr_miss_12$hr_score_3
+final_tabless[match(hr_miss_12$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- hr_miss_12
+
+final_tabless
+```
+
+-temp
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+temp_miss_all <- final_tabless[is.na(final_tabless$temp_score_1) == TRUE & is.na(final_tabless$temp_score_2) == TRUE &
+                               is.na(final_tabless$temp_score_3) == TRUE, ]
+temp_middle <- median(final_tables$temp_score, na.rm=TRUE) 
+temp_miss_all$temp_score_1[is.na(temp_miss_all$temp_score_1)] <- temp_middle
+temp_miss_all$temp_score_2[is.na(temp_miss_all$temp_score_2)] <- temp_middle
+temp_miss_all$temp_score_3[is.na(temp_miss_all$temp_score_3)] <- temp_middle
+final_tabless[match(temp_miss_all$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- temp_miss_all
+
+temp_miss_second <- final_tabless[is.na(final_tabless$temp_score_2) == TRUE & is.na(final_tabless$temp_score_1) == FALSE &
+                                  is.na(final_tabless$temp_score_3) == FALSE, ]
+temp_miss_second$temp_score_2 <- rowMeans(temp_miss_second[, c(11,34)])
+final_tabless[match(temp_miss_second$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- temp_miss_second
+
+temp_miss_first <- final_tabless[is.na(final_tabless$temp_score_1) == TRUE & is.na(final_tabless$temp_score_2) == FALSE &
+                                 is.na(final_tabless$temp_score_3) == FALSE, ]
+temp_miss_first$temp_score_1 <- temp_miss_first$temp_score_2
+final_tabless[match(temp_miss_first$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- temp_miss_first
+
+temp_miss_third <- final_tabless[is.na(final_tabless$temp_score_1) == FALSE & is.na(final_tabless$temp_score_2) == FALSE &
+                                 is.na(final_tabless$temp_score_3) == TRUE, ]
+temp_miss_third$temp_score_3 <- temp_miss_third$temp_score_2
+final_tabless[match(temp_miss_third$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- temp_miss_third
+
+temp_miss_23 <- final_tabless[is.na(final_tabless$temp_score_1) == FALSE & is.na(final_tabless$temp_score_2) == TRUE &
+                              is.na(final_tabless$temp_score_3) == TRUE, ]
+temp_miss_23$temp_score_2 <- temp_miss_23$temp_score_1
+temp_miss_23$temp_score_3 <- temp_miss_23$temp_score_1
+final_tabless[match(temp_miss_23$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- temp_miss_23
+
+temp_miss_13 <- final_tabless[is.na(final_tabless$temp_score_1) == TRUE & is.na(final_tabless$temp_score_2) == FALSE &
+                              is.na(final_tabless$temp_score_3) == TRUE, ]
+temp_miss_13$temp_score_1 <- temp_miss_13$temp_score_2
+temp_miss_13$temp_score_3 <- temp_miss_13$temp_score_2
+final_tabless[match(temp_miss_13$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- temp_miss_13
+
+temp_miss_12 <- final_tabless[is.na(final_tabless$temp_score_1) == TRUE & is.na(final_tabless$temp_score_2) == TRUE &
+                              is.na(final_tabless$temp_score_3) == FALSE, ]
+temp_miss_12$temp_score_1 <- temp_miss_12$temp_score_3
+temp_miss_12$temp_score_2 <- temp_miss_12$temp_score_3
+final_tabless[match(temp_miss_12$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- temp_miss_12
+
+final_tabless
+```
+
+-bun
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+bun_miss_all <- final_tabless[is.na(final_tabless$bun_score_1) == TRUE & is.na(final_tabless$bun_score_2) == TRUE &
+                              is.na(final_tabless$bun_score_3) == TRUE, ]
+bun_middle <- median(final_tables$bun_score, na.rm=TRUE) 
+bun_miss_all$bun_score_1[is.na(bun_miss_all$bun_score_1)] <- bun_middle
+bun_miss_all$bun_score_2[is.na(bun_miss_all$bun_score_2)] <- bun_middle
+bun_miss_all$bun_score_3[is.na(bun_miss_all$bun_score_3)] <- bun_middle
+final_tabless[match(bun_miss_all$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- bun_miss_all
+
+bun_miss_second <- final_tabless[is.na(final_tabless$bun_score_2) == TRUE & is.na(final_tabless$bun_score_1) == FALSE &
+                                 is.na(final_tabless$bun_score_3) == FALSE, ]
+bun_miss_second$bun_score_2 <- rowMeans(bun_miss_second[, c(12,35)])
+final_tabless[match(bun_miss_second$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- bun_miss_second
+
+bun_miss_first <- final_tabless[is.na(final_tabless$bun_score_1) == TRUE & is.na(final_tabless$bun_score_2) == FALSE &
+                                is.na(final_tabless$bun_score_3) == FALSE, ]
+bun_miss_first$bun_score_1 <- bun_miss_first$bun_score_2
+final_tabless[match(bun_miss_first$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- bun_miss_first
+
+bun_miss_third <- final_tabless[is.na(final_tabless$bun_score_1) == FALSE & is.na(final_tabless$bun_score_2) == FALSE &
+                                is.na(final_tabless$bun_score_3) == TRUE, ]
+bun_miss_third$bun_score_3 <- bun_miss_third$bun_score_2
+final_tabless[match(bun_miss_third$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- bun_miss_third
+
+bun_miss_23 <- final_tabless[is.na(final_tabless$bun_score_1) == FALSE & is.na(final_tabless$bun_score_2) == TRUE &
+                             is.na(final_tabless$bun_score_3) == TRUE, ]
+bun_miss_23$bun_score_2 <- bun_miss_23$bun_score_1
+bun_miss_23$bun_score_3 <- bun_miss_23$bun_score_1
+final_tabless[match(bun_miss_23$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- bun_miss_23
+
+bun_miss_13 <- final_tabless[is.na(final_tabless$bun_score_1) == TRUE & is.na(final_tabless$bun_score_2) == FALSE &
+                             is.na(final_tabless$bun_score_3) == TRUE, ]
+bun_miss_13$bun_score_1 <- bun_miss_13$bun_score_2
+bun_miss_13$bun_score_3 <- bun_miss_13$bun_score_2
+final_tabless[match(bun_miss_13$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- bun_miss_13
+
+bun_miss_12 <- final_tabless[is.na(final_tabless$bun_score_1) == TRUE & is.na(final_tabless$bun_score_2) == TRUE &
+                             is.na(final_tabless$bun_score_3) == FALSE, ]
+bun_miss_12$bun_score_1 <- bun_miss_12$bun_score_3
+bun_miss_12$bun_score_2 <- bun_miss_12$bun_score_3
+final_tabless[match(bun_miss_12$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- bun_miss_12
+
+final_tabless
+```
+
+-potassium
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+potassium_miss_all <- final_tabless[is.na(final_tabless$potassium_score_1) == TRUE & is.na(final_tabless$potassium_score_2) == TRUE &
+                                    is.na(final_tabless$potassium_score_3) == TRUE, ]
+potassium_middle <- median(final_tables$potassium_score, na.rm=TRUE) 
+potassium_miss_all$potassium_score_1[is.na(potassium_miss_all$potassium_score_1)] <- potassium_middle
+potassium_miss_all$potassium_score_2[is.na(potassium_miss_all$potassium_score_2)] <- potassium_middle
+potassium_miss_all$potassium_score_3[is.na(potassium_miss_all$potassium_score_3)] <- potassium_middle
+final_tabless[match(potassium_miss_all$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- potassium_miss_all
+
+potassium_miss_second <- final_tabless[is.na(final_tabless$potassium_score_2) == TRUE & is.na(final_tabless$potassium_score_1) == FALSE &
+                                       is.na(final_tabless$potassium_score_3) == FALSE, ]
+potassium_miss_second$potassium_score_2 <- rowMeans(potassium_miss_second[, c(13,36)])
+final_tabless[match(potassium_miss_second$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- potassium_miss_second
+
+potassium_miss_first <- final_tabless[is.na(final_tabless$potassium_score_1) == TRUE & is.na(final_tabless$potassium_score_2) == FALSE &
+                                      is.na(final_tabless$potassium_score_3) == FALSE, ]
+potassium_miss_first$potassium_score_1 <- potassium_miss_first$potassium_score_2
+final_tabless[match(potassium_miss_first$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- potassium_miss_first
+
+potassium_miss_third <- final_tabless[is.na(final_tabless$potassium_score_1) == FALSE & is.na(final_tabless$potassium_score_2) == FALSE &
+                                      is.na(final_tabless$potassium_score_3) == TRUE, ]
+potassium_miss_third$potassium_score_3 <- potassium_miss_third$potassium_score_2
+final_tabless[match(potassium_miss_third$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- potassium_miss_third
+
+potassium_miss_23 <- final_tabless[is.na(final_tabless$potassium_score_1) == FALSE & is.na(final_tabless$potassium_score_2) == TRUE &
+                                   is.na(final_tabless$potassium_score_3) == TRUE, ]
+potassium_miss_23$potassium_score_2 <- potassium_miss_23$potassium_score_1
+potassium_miss_23$potassium_score_3 <- potassium_miss_23$potassium_score_1
+final_tabless[match(potassium_miss_23$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- potassium_miss_23
+
+potassium_miss_13 <- final_tabless[is.na(final_tabless$potassium_score_1) == TRUE & is.na(final_tabless$potassium_score_2) == FALSE &
+                                   is.na(final_tabless$potassium_score_3) == TRUE, ]
+potassium_miss_13$potassium_score_1 <- potassium_miss_13$potassium_score_2
+potassium_miss_13$potassium_score_3 <- potassium_miss_13$potassium_score_2
+final_tabless[match(potassium_miss_13$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- potassium_miss_13
+
+potassium_miss_12 <- final_tabless[is.na(final_tabless$potassium_score_1) == TRUE & is.na(final_tabless$potassium_score_2) == TRUE &
+                                   is.na(final_tabless$potassium_score_3) == FALSE, ]
+potassium_miss_12$potassium_score_1 <- potassium_miss_12$potassium_score_3
+potassium_miss_12$potassium_score_2 <- potassium_miss_12$potassium_score_3
+final_tabless[match(potassium_miss_12$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- potassium_miss_12
+
+final_tabless
+```
+
+-sodium
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+sodium_miss_all <- final_tabless[is.na(final_tabless$sodium_score_1) == TRUE & is.na(final_tabless$sodium_score_2) == TRUE &
+                                 is.na(final_tabless$sodium_score_3) == TRUE, ]
+sodium_middle <- median(final_tables$sodium_score, na.rm=TRUE) 
+sodium_miss_all$sodium_score_1[is.na(sodium_miss_all$sodium_score_1)] <- sodium_middle
+sodium_miss_all$sodium_score_2[is.na(sodium_miss_all$sodium_score_2)] <- sodium_middle
+sodium_miss_all$sodium_score_3[is.na(sodium_miss_all$sodium_score_3)] <- sodium_middle
+final_tabless[match(sodium_miss_all$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- sodium_miss_all
+
+sodium_miss_second <- final_tabless[is.na(final_tabless$sodium_score_2) == TRUE & is.na(final_tabless$sodium_score_1) == FALSE &
+                                    is.na(final_tabless$sodium_score_3) == FALSE, ]
+sodium_miss_second$sodium_score_2 <- rowMeans(sodium_miss_second[, c(14,37)])
+final_tabless[match(sodium_miss_second$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- sodium_miss_second
+
+sodium_miss_first <- final_tabless[is.na(final_tabless$sodium_score_1) == TRUE & is.na(final_tabless$sodium_score_2) == FALSE &
+                                   is.na(final_tabless$sodium_score_3) == FALSE, ]
+sodium_miss_first$sodium_score_1 <- sodium_miss_first$sodium_score_2
+final_tabless[match(sodium_miss_first$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- sodium_miss_first
+
+sodium_miss_third <- final_tabless[is.na(final_tabless$sodium_score_1) == FALSE & is.na(final_tabless$sodium_score_2) == FALSE &
+                                   is.na(final_tabless$sodium_score_3) == TRUE, ]
+sodium_miss_third$sodium_score_3 <- sodium_miss_third$sodium_score_2
+final_tabless[match(sodium_miss_third$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- sodium_miss_third
+
+sodium_miss_23 <- final_tabless[is.na(final_tabless$sodium_score_1) == FALSE & is.na(final_tabless$sodium_score_2) == TRUE &
+                                is.na(final_tabless$sodium_score_3) == TRUE, ]
+sodium_miss_23$sodium_score_2 <- sodium_miss_23$sodium_score_1
+sodium_miss_23$sodium_score_3 <- sodium_miss_23$sodium_score_1
+final_tabless[match(sodium_miss_23$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- sodium_miss_23
+
+sodium_miss_13 <- final_tabless[is.na(final_tabless$sodium_score_1) == TRUE & is.na(final_tabless$sodium_score_2) == FALSE &
+                                is.na(final_tabless$sodium_score_3) == TRUE, ]
+sodium_miss_13$sodium_score_1 <- sodium_miss_13$sodium_score_2
+sodium_miss_13$sodium_score_3 <- sodium_miss_13$sodium_score_2
+final_tabless[match(sodium_miss_13$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- sodium_miss_13
+
+sodium_miss_12 <- final_tabless[is.na(final_tabless$sodium_score_1) == TRUE & is.na(final_tabless$sodium_score_2) == TRUE &
+                                is.na(final_tabless$sodium_score_3) == FALSE, ]
+sodium_miss_12$sodium_score_1 <- sodium_miss_12$sodium_score_3
+sodium_miss_12$sodium_score_2 <- sodium_miss_12$sodium_score_3
+final_tabless[match(sodium_miss_12$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- sodium_miss_12
+
+final_tabless
+```
+
+-bilirubin
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+bilirubin_miss_all <- final_tabless[is.na(final_tabless$bilirubin_score_1) == TRUE & is.na(final_tabless$bilirubin_score_2) == TRUE &
+                                    is.na(final_tabless$bilirubin_score_3) == TRUE, ]
+bilirubin_middle <- median(final_tables$bilirubin, na.rm=TRUE) 
+bilirubin_miss_all$bilirubin_score_1[is.na(bilirubin_miss_all$bilirubin_score_1)] <- bilirubin_middle
+bilirubin_miss_all$bilirubin_score_2[is.na(bilirubin_miss_all$bilirubin_score_2)] <- bilirubin_middle
+bilirubin_miss_all$bilirubin_score_3[is.na(bilirubin_miss_all$bilirubin_score_3)] <- bilirubin_middle
+final_tabless[match(bilirubin_miss_all$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- bilirubin_miss_all
+
+bilirubin_miss_second <- final_tabless[is.na(final_tabless$bilirubin_score_2) == TRUE & is.na(final_tabless$bilirubin_score_1) == FALSE &
+                                       is.na(final_tabless$bilirubin_score_3) == FALSE, ]
+bilirubin_miss_second$bilirubin_score_2 <- rowMeans(bilirubin_miss_second[, c(15,38)])
+final_tabless[match(bilirubin_miss_second$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- bilirubin_miss_second
+
+bilirubin_miss_first <- final_tabless[is.na(final_tabless$bilirubin_score_1) == TRUE & is.na(final_tabless$bilirubin_score_2) == FALSE &
+                                      is.na(final_tabless$bilirubin_score_3) == FALSE, ]
+bilirubin_miss_first$bilirubin_score_1 <- bilirubin_miss_first$bilirubin_score_2
+final_tabless[match(bilirubin_miss_first$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- bilirubin_miss_first
+
+bilirubin_miss_third <- final_tabless[is.na(final_tabless$bilirubin_score_1) == FALSE & is.na(final_tabless$bilirubin_score_2) == FALSE &
+                                      is.na(final_tabless$bilirubin_score_3) == TRUE, ]
+bilirubin_miss_third$bilirubin_score_3 <- bilirubin_miss_third$bilirubin_score_2
+final_tabless[match(bilirubin_miss_third$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- bilirubin_miss_third
+
+bilirubin_miss_23 <- final_tabless[is.na(final_tabless$bilirubin_score_1) == FALSE & is.na(final_tabless$bilirubin_score_2) == TRUE &
+                                   is.na(final_tabless$bilirubin_score_3) == TRUE, ]
+bilirubin_miss_23$bilirubin_score_2 <- bilirubin_miss_23$bilirubin_score_1
+bilirubin_miss_23$bilirubin_score_3 <- bilirubin_miss_23$bilirubin_score_1
+final_tabless[match(bilirubin_miss_23$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- bilirubin_miss_23
+
+bilirubin_miss_13 <- final_tabless[is.na(final_tabless$bilirubin_score_1) == TRUE & is.na(final_tabless$bilirubin_score_2) == FALSE &
+                                   is.na(final_tabless$bilirubin_score_3) == TRUE, ]
+bilirubin_miss_13$bilirubin_score_1 <- bilirubin_miss_13$bilirubin_score_2
+bilirubin_miss_13$bilirubin_score_3 <- bilirubin_miss_13$bilirubin_score_2
+final_tabless[match(bilirubin_miss_13$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- bilirubin_miss_13
+
+bilirubin_miss_12 <- final_tabless[is.na(final_tabless$bilirubin_score_1) == TRUE & is.na(final_tabless$bilirubin_score_2) == TRUE &
+                                   is.na(final_tabless$bilirubin_score_3) == FALSE, ]
+bilirubin_miss_12$bilirubin_score_1 <- bilirubin_miss_12$bilirubin_score_3
+bilirubin_miss_12$bilirubin_score_2 <- bilirubin_miss_12$bilirubin_score_3
+final_tabless[match(bilirubin_miss_12$ICUSTAY_ID, final_tabless$ICUSTAY_ID), ] <- bilirubin_miss_12
+
+final_tabless
+```
+
+
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+final_tabless$age_score_1 <- ifelse(final_tabless$AGE == "40-", 0,
+                             ifelse(final_tabless$AGE == "40-59", 7,
+                             ifelse(final_tabless$AGE == "60-69", 12,
+                             ifelse(final_tabless$AGE == "70-74", 15,
+                             ifelse(final_tabless$AGE == "75-79", 16,
+                             ifelse(final_tabless$AGE == "80+", 18, NA))))))
+final_tabless$age_score_2 <- ifelse(final_tabless$AGE == "40-", 0,
+                             ifelse(final_tabless$AGE == "40-59", 7,
+                             ifelse(final_tabless$AGE == "60-69", 12,
+                             ifelse(final_tabless$AGE == "70-74", 15,
+                             ifelse(final_tabless$AGE == "75-79", 16,
+                             ifelse(final_tabless$AGE == "80+", 18, NA))))))
+final_tabless$age_score_3 <- ifelse(final_tabless$AGE == "40-", 0,
+                             ifelse(final_tabless$AGE == "40-59", 7,
+                             ifelse(final_tabless$AGE == "60-69", 12,
+                             ifelse(final_tabless$AGE == "70-74", 15,
+                             ifelse(final_tabless$AGE == "75-79", 16,
+                             ifelse(final_tabless$AGE == "80+", 18, NA))))))
+final_tabless
+```
+
+
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+careunit <- careunit[careunit$SUBJECT_ID %in% final_tabless$SUBJECT_ID & careunit$HADM_ID %in% final_tabless$HADM_ID, ]
+careunit <- careunit[order(careunit$SUBJECT_ID), , drop=FALSE]
+final_tabless <- cbind(final_tabless, careunit[, 6])
+colnames(final_tabless)[40] <- "FIRST_CAREUNIT"
+final_tabless
+```
+
+
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+
+```
+
+
