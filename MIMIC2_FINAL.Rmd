@@ -1,0 +1,1187 @@
+---
+title: "Study of important lab factors that impact diabetes and mortality prediction"
+author: "Tianhao Gu"
+date: "2018/8/13"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+# Author:
+Author: Tianhao Gu; 
+Collaborator: Kai Yan; 
+Teammates: Kai Yan, Yaotian Dai, Wenlin Gong, Nikolas Gianoulis
+
+#1. Required package:
+tidyverse, lubridate, plyr, ggpubr, randomForest, caret, pROC.
+```{r setup, include=FALSE}
+if (!require("tidyverse")) {
+  install.packages("tidyverse")
+  library(tidyverse)
+}
+if (!require("lubridate")) {
+  install.packages("lubridate")
+  library(lubridate)
+}
+if (!require("plyr")) {
+  install.packages("plyr")
+  library(plyr)
+}
+if (!require("ggpubr")) {
+  install.packages("ggpubr")
+  library(ggpubr)
+}
+if (!require("randomForest")) {
+  install.packages("randomForest")
+  library(randomForest)
+}
+if (!require("caret")) {
+   install.packages("caret")
+   library(caret)
+}
+if (!require("ROCR")) {
+   install.packages("ROCR")
+   library(ROCR)
+}
+if (!require("pROC")) {
+   install.packages("pROC")
+   library(pROC)
+}
+if (!require("scales")) {
+   install.packages("scales")
+   library(scales)
+}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+#2. Abstract:
+As diabetes become a significant health problem, study needs to be taken to examine the related influence of diabetes, 
+and comorbidities on outcomes in ICU patients. Based on the MIMIC III database, this paper choose six variables consists 
+of glucose value, hemoglobin A1c values, insulin status, Charlson Comorbidities Index, Elixhauser Comorbidities Index, 
+and Diabetics Complication Severity index to see how these variables and what kind of values of these variables influence 
+mortality in ICU. Finally models are built to analyze and predict mortality of diabetics in ICU.
+
+
+#3. Background and introduction:
+Diabetic patients constitute 7% of the United States population who use significantly more healthcare resources than 
+patients with other chronic diseases. Diabetes itself leads to a higher incidence of nearly all comorbidities.
+Nowadays, no study has oserved the combination of glucose control, hemoglobin A1c values, and comorbidities to predict 
+mortality outcomes. A recent study shows that the value of these variables in predictive modeling for diabetics is important.
+Algorithms exist to predict mortality risk in general patient populations, with the Charlson Comorbidity Index, the Elixhauser Comorbidity Index and Diabetic Complication Severity Index. These three measures calculate risk scores based on the ICD-9-CM 
+diagnosis codes for each patient.
+This project aims to test which of the established comorbidity indices best predicts mortality in diabetic patients in
+the ICU. By combining other variables of diabetic health including HbA1c, mean glucose during stay, insulin status,
+as well as these various indices, predictions are made about which diabetics are more likely to have adverse
+outcomes using both logistic modeling techniques as well as randomForest model.
+
+
+#4. Problems Trackled:
+The general goal of this project is to predict mortality in diabetic ICU patients in terms of variables of interest
+and analyze how these variables(lab values, lab scores, and status) impact mortality of diabetic patients.
+Thus our work seperates into three parts. The first is data cleaning, which is use innerjoin to combine all personal
+information of each patient's first HAAM_ID into a information table. Then we search for glucose, HbA1c, and insulin
+and use their item id to find values or status. Similarly, we transfer required icd 9 code to diseases and calculate 
+theirs DCSI & ELIX & CCI scores according to different algorithms. Finally we combine these variables to the table 
+in terms of subject & hadm id in the information table, and select diabetic patients(ICD 9 CODE 250.0-250.9).
+The second part is data svisualization and statistics. ggplot is used to view the distribution of the six selected 
+variables and calculate mean value of each variables of interest as well as that of basic information variables.
+The third part is modeling. We use logistic regression model to analyze how six variables impact mortality and which 
+interval influence the most. And then we do the prediction of mortality depends on different thresholds ,and choose
+the best threshold, then calculate area under curve. Finally, synthetic data are generated based on raw data,
+which will be compared with the result of raw data.
+
+
+#5. Data description:
+Basic information we need: Patient Subject ID, Hospital HADM ID, Age, Ethnicity, Insurance, Admission type, Mortality time 
+                           and Mortality within 30 days (binary).
+Variables of interest: Glucose Value, HbA1c Value, Insulin Status, DCSI Score, ELIX Score, CCI Score.
+
+(a) Read files: (individual work)
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+patients <- read.csv("~/data_mimic/MIMIC_RAW_CSV/PATIENTS.csv")
+#patients <- patients[complete.cases(patients), ]
+admissions <- read.csv("~/data_mimic/MIMIC_RAW_CSV/ADMISSIONS.csv")
+#admissions <- admissions[complete.cases(admissions), ]
+icds <- read.csv("~/data_mimic/MIMIC_RAW_CSV/DIAGNOSES_ICD.csv")
+#icds <- icds[complete.cases(icds), ]
+lab_items <- read.csv("~/data_mimic/MIMIC_RAW_CSV/D_LABITEMS.csv")
+#lab_items <- lab_items[complete.cases(lab_items), ]
+lab_events <- read.csv("~/data_mimic/MIMIC_RAW_CSV/LABEVENTS.csv")
+#lab_events <- lab_events[complete.cases(lab_events), ]
+prescripts <- read.csv("~/data_mimic/MIMIC_RAW_CSV/PRESCRIPTIONS.csv")
+#prescripts <- prescripts[complete.cases(prescripts), ] 
+```
+
+(b) Choose column names we want: (individual work)
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+dob_genders <- patients[, c("SUBJECT_ID", "GENDER", "DOB")]
+race_insr_type <- admissions[, c("SUBJECT_ID", "HADM_ID", "ETHNICITY", "INSURANCE", "ADMISSION_TYPE",
+                                 "ADMITTIME", "DEATHTIME")]
+icds_code <- icds[, c("SUBJECT_ID", "HADM_ID", "ICD9_CODE")]
+label_fluid <- lab_items[, c("ITEMID", "LABEL", "FLUID")]
+id_value <- lab_events[, c("SUBJECT_ID", "ITEMID", "VALUE")]
+drug_name <- prescripts[, c("SUBJECT_ID", "HADM_ID", "DRUG", "DRUG_NAME_POE", "DRUG_NAME_GENERIC")]
+```
+
+(c) Extract patients with ICD 9 codes corresponding to diabetes: (individual work)
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+diab_patient <- icds[icds$ICD9_CODE %in% c(25000:25099), ]
+diab_patient <- diab_patient[nrow(diab_patient):1, ]
+diab_patient <- diab_patient[!duplicated(diab_patient[, "SUBJECT_ID"]), ]
+diab_patient <- diab_patient[nrow(diab_patient):1, ]
+first_table <- diab_patient
+```
+
+
+(d) First collapse factor levels into our defined groups include admission type, ethnicity and insurance.
+    Then we remove duplicated subject id and combine vriables of personal information using inner_join.
+    After that we calcualte age using date of birth and admit time, and decides mortality depends on whether
+    a person has death tiem in ICU. (individual work)
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+race_insr_type$ETHNICITY <- fct_collapse(race_insr_type$ETHNICITY,
+                                      White = c(levels(race_insr_type$ETHNICITY)[37:41]),
+                                      Black = c(levels(race_insr_type$ETHNICITY)[13:16]),
+                                      Asian = c(levels(race_insr_type$ETHNICITY)[3:12]),
+                                      Other = c(levels(race_insr_type$ETHNICITY)[c(1:2, 17, 28:33, 35:36)]),
+                                      Hispanic=c(levels(race_insr_type$ETHNICITY)[c(18:27, 34)]))
+race_insr_type$ADMISSION_TYPE <- fct_collapse(race_insr_type$ADMISSION_TYPE,
+                                              Elective = c(levels(race_insr_type$ADMISSION_TYPE)[1]),
+                                              Newborn = c(levels(race_insr_type$ADMISSION_TYPE)[3]),
+                                              Unplanned = c(levels(race_insr_type$ADMISSION_TYPE)[c(2,4)]))
+first_table <- inner_join(first_table, dob_genders, by = "SUBJECT_ID") %>%
+               inner_join(., race_insr_type, by = c("SUBJECT_ID", "HADM_ID"))
+first_table$SEQ_NUM <- NULL
+first_table$ICD9_CODE <- NULL
+
+admit_times <- ymd_hms(first_table$ADMITTIME)
+death_times <- ymd_hms(first_table$DEATHTIME)
+mort_thirtys <- (death_times - admit_times)
+first_table$MORTALITY_TIME <- mort_thirtys
+first_table = within(first_table, {MORT_IN_30_DAY = ifelse(MORTALITY_TIME > -1000, 1, 0)})
+first_table$MORT_IN_30_DAY[is.na(first_table$MORT_IN_30_DAY)] <- 0
+
+birth_date <- ymd_hms(first_table$DOB)
+first_table$AGE  <- round((difftime(admit_times, birth_date, units="days")) / 365.242)
+first_table$timedf <- round((difftime(death_times, birth_date, units="days"))/365.242)
+#first_table <- subset(first_table, first_table$AGE >= 18)
+first_table$AGE <- as.numeric(first_table$AGE)
+first_table$AGE <- ifelse(first_table$AGE<50, "<50",
+                   ifelse(first_table$AGE>49 & first_table$AGE<60, "50-59",
+                   ifelse(first_table$AGE>59 & first_table$AGE<70, "60-69",
+                   ifelse(first_table$AGE>69 & first_table$AGE<80, "70-79",
+                   ifelse(first_table$AGE>79,"80+",
+                   NA)))))
+first_table$AGE <- as.factor(first_table$AGE)
+first_table$ADMITTIME <- NULL
+first_table$DEATHTIME <- NULL
+first_table$timedf <- NULL
+first_table$DOB <- NULL
+```
+
+(e1) Match glucose of blood type and item id, record their values corresponding to item id, and join to the table. 
+     (individual work)
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+glucose_matrix <- lab_items[(lab_items$LABEL == "Glucose") & (lab_items$FLUID == "Blood"), ]
+glucose_label <- glucose_matrix$ITEMID
+glucose_label <- as.factor(glucose_label)
+glucose_sample <- lab_events[lab_events$ITEMID %in% glucose_label, ]
+glucose_sample <- glucose_sample[glucose_sample$HADM_ID %in% first_table$HADM_ID, ]
+
+glucose_mean <- aggregate(glucose_sample$VALUENUM, by = list(glucose_sample$SUBJECT_ID), mean)
+colnames(glucose_mean)[1] <- "SUBJECT_ID"
+colnames(glucose_mean)[2] <- "GLUCOSE_VALUE"
+
+first_table <- full_join(first_table, glucose_mean, by = "SUBJECT_ID")
+```
+
+(e2) Match HbA1c of blood type and item id, record their values corresponding to item id, and join to the table.
+     (individual work)
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+hbac_matrix <- lab_items[(lab_items$LABEL == "% Hemoglobin A1c") & (lab_items$FLUID == "Blood"), ]
+hbac_label <- hbac_matrix$ITEMID
+hbac_label <- as.factor(hbac_label)
+hbac_sample <- lab_events[lab_events$ITEMID %in% hbac_label, ]
+hbac_sample <- hbac_sample[hbac_sample$SUBJECT_ID %in% first_table$SUBJECT_ID, ]
+
+hbac_mean <- aggregate(hbac_sample$VALUENUM, by = list(hbac_sample$SUBJECT_ID), mean)
+colnames(hbac_mean)[1] <- "SUBJECT_ID"
+colnames(hbac_mean)[2] <- "HbA1c_VALUE"
+
+first_table <- full_join(first_table, hbac_mean, by = "SUBJECT_ID")
+```
+
+(e3) Match insulin in drug or drug generic list and item id, record their status corresponding to item id, 
+     and join to the table. (individual work)
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+insulin <- prescripts[prescripts$SUBJECT_ID %in% first_table$SUBJECT_ID & prescripts$HADM_ID %in%
+                      first_table$HADM_ID, ]
+insulin$INSULIN_STATUS <- ifelse(insulin$DRUG == "Insulin" |
+                                 insulin$DRUG_NAME_GENERIC == "Insulin Glargine", 1, 0)
+insulin <- insulin[, c("SUBJECT_ID", "HADM_ID", "INSULIN_STATUS")]
+insulin_table <- aggregate(insulin$INSULIN_STATUS, by = list(insulin$SUBJECT_ID), max)
+colnames(insulin_table)[1] <- "SUBJECT_ID"
+colnames(insulin_table)[2] <- "INSULIN_STATUS"
+first_table <- full_join(first_table, insulin_table, by = "SUBJECT_ID")
+```
+
+(e4) Transfer Diabetes Complications icd 9 code to specific diseases and sum each person's DCSI scores 
+     according to severity of seperate disease. (Collaborate with Kai Yan)
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+dcsi_code <- icds[(icds$SUBJECT_ID %in% first_table$SUBJECT_ID) & (icds$HADM_ID %in% first_table$HADM_ID), ]
+
+dcsi_ret_one <- dcsi_code[dcsi_code$ICD9_CODE %in% c(25050:25059, "36201", 36210:36219, "36283", "36253", 
+                                                     "36281", "36282"), ]
+dcsi_nep_one <- dcsi_code[dcsi_code$ICD9_CODE %in% c(25040:25049, 5800:5809, 58000:58099, 5810:5819, 58100:58199, 
+                                                     5820:5829, 58200:58299, 5830:5839, 58300:58399, "580", "581", 
+                                                     "582", "583"), ]
+dcsi_neu_one <- dcsi_code[dcsi_code$ICD9_CODE %in% c("3569", 25060:25069, "3581", "9510", "9511", "9513", 3540:3559,
+                                                     35500:35599, "7135", "3572", "59654", 3370:3371, 33700:33709,
+                                                     33710:33719, "5645", "5363", "4580"), ]
+dcsi_cer_one <- dcsi_code[dcsi_code$ICD9_CODE %in% c("435", 4350:4359), ]
+dcsi_car_one <- dcsi_code[dcsi_code$ICD9_CODE %in% c(4400:4409, 44000:44099, "411", 4110:4119, 41100:41199, 4130:4139,
+                                                     41300:41399, 4140:4149, 41400:41499, 413:414, "4292"), ]
+dcsi_pvd_one <- dcsi_code[dcsi_code$ICD9_CODE %in% c("2507", 25070:25079, "4423", 44230:44239, "44381", "4439", "8921"), ]
+                                                     
+dcsi_ret_two <- dcsi_code[dcsi_code$ICD9_CODE %in% c(36202, 37923, 36101:36119, 36900:36999, 3690:3699), ]
+dcsi_nep_two <- dcsi_code[dcsi_code$ICD9_CODE %in% c(5851:5859, 586, 5939), ]
+dcsi_cer_two <- dcsi_code[dcsi_code$ICD9_CODE %in% c(431, 43300:43499, 436), ]
+dcsi_car_two <- dcsi_code[dcsi_code$ICD9_CODE %in% c(41000:41092, 4271, 42731:42742, 4275, 4280, 4281, 42820:42843,
+                                                     4289, 412, 44023, 44024, 44100:44103, 4411:4419), ]
+dcsi_pvd_two <- dcsi_code[dcsi_code$ICD9_CODE %in% c(44422, 0400:0403, 04041:04089, 7854, 70710:70719), ]
+dcsi_met_two <- dcsi_code[dcsi_code$ICD9_CODE %in% c(25010:25033), ]
+
+
+SCORE <- matrix(1, nrow=nrow(dcsi_ret_one))
+dcsi_one_1 <- cbind(dcsi_ret_one, SCORE)
+SCORE <- matrix(2, nrow=nrow(dcsi_ret_two))
+dcsi_two_1 <- cbind(dcsi_ret_two, SCORE)
+dcsi_ret <- rbind(dcsi_one_1, dcsi_two_1)
+colnames(dcsi_ret)[6] <- "SCORE"
+dcsi_ret_final <- aggregate(dcsi_ret$SCORE, by = list(dcsi_ret$SUBJECT_ID), max)
+
+SCORE <- matrix(1, nrow=nrow(dcsi_nep_one))
+dcsi_one_2 <- cbind(dcsi_nep_one, SCORE)
+SCORE <- matrix(2, nrow=nrow(dcsi_nep_two))
+dcsi_two_2 <- cbind(dcsi_nep_two, SCORE)
+dcsi_nep <- rbind(dcsi_one_2, dcsi_two_2)
+colnames(dcsi_nep)[6] <- "SCORE"
+dcsi_nep_final <- aggregate(dcsi_nep$SCORE, by = list(dcsi_nep$SUBJECT_ID), max)
+
+SCORE <- matrix(1, nrow=nrow(dcsi_neu_one))
+dcsi_neu <- cbind(dcsi_neu_one, SCORE)
+colnames(dcsi_neu)[6] <- "SCORE"
+dcsi_neu_final <- aggregate(dcsi_neu$SCORE, by = list(dcsi_neu$SUBJECT_ID), max)
+
+SCORE <- matrix(1, nrow=nrow(dcsi_cer_one))
+dcsi_one_4 <- cbind(dcsi_cer_one, SCORE)
+SCORE <- matrix(2, nrow=nrow(dcsi_cer_two))
+dcsi_two_4 <- cbind(dcsi_cer_two, SCORE)
+dcsi_cer <- rbind(dcsi_one_4, dcsi_two_4)
+colnames(dcsi_cer)[6] <- "SCORE"
+dcsi_cer_final <- aggregate(dcsi_cer$SCORE, by = list(dcsi_cer$SUBJECT_ID), max)
+
+SCORE <- matrix(1, nrow=nrow(dcsi_car_one))
+dcsi_one_5 <- cbind(dcsi_car_one, SCORE)
+SCORE <- matrix(2, nrow=nrow(dcsi_car_two))
+dcsi_two_5 <- cbind(dcsi_car_two, SCORE)
+dcsi_car <- rbind(dcsi_one_5, dcsi_two_5)
+colnames(dcsi_car)[6] <- "SCORE"
+dcsi_car_final <- aggregate(dcsi_car$SCORE, by = list(dcsi_car$SUBJECT_ID), max)
+
+SCORE <- matrix(1, nrow=nrow(dcsi_pvd_one))
+dcsi_one_6 <- cbind(dcsi_pvd_one, SCORE)
+SCORE <- matrix(2, nrow=nrow(dcsi_pvd_two))
+dcsi_two_6 <- cbind(dcsi_pvd_two, SCORE)
+dcsi_pvd <- rbind(dcsi_one_6, dcsi_two_6)
+colnames(dcsi_pvd)[6] <- "SCORE"
+dcsi_pvd_final <- aggregate(dcsi_pvd$SCORE, by = list(dcsi_pvd$SUBJECT_ID), max)
+
+SCORE <- matrix(2, nrow=nrow(dcsi_met_two))
+dcsi_met <- cbind(dcsi_met_two, SCORE)
+colnames(dcsi_met)[6] <- "SCORE"
+dcsi_met_final <- aggregate(dcsi_met$SCORE, by = list(dcsi_met$SUBJECT_ID), max)
+
+dcsi_table <- rbind(dcsi_ret_final, dcsi_nep_final, dcsi_neu_final, dcsi_cer_final, dcsi_car_final, 
+                    dcsi_pvd_final, dcsi_met_final)
+colnames(dcsi_table)[1] <- "SUBJECT_ID"
+colnames(dcsi_table)[2] <- "SCORE"
+
+dcsi_sum <- aggregate(dcsi_table$SCORE, by = list(dcsi_table$SUBJECT_ID), sum)
+colnames(dcsi_sum)[1] <- "SUBJECT_ID"
+colnames(dcsi_sum)[2] <- "DCSI_SCORE"
+
+dcsi_zero <- dcsi_code[!(dcsi_code$SUBJECT_ID %in% dcsi_sum$SUBJECT_ID), ]
+dcsi_zero <- dcsi_zero[!duplicated(dcsi_zero$SUBJECT_ID), ]
+dcsi_zero <- dcsi_zero[, c("SUBJECT_ID", "HADM_ID")]
+DCSI_SCORE <- matrix(0, nrow=nrow(dcsi_zero))
+dcsi_zero <- cbind(dcsi_zero, DCSI_SCORE)
+dcsi_zero <- dcsi_zero[, c("SUBJECT_ID", "DCSI_SCORE")]
+
+dcsi_final <- rbind(dcsi_sum, dcsi_zero)
+first_table <- full_join(first_table, dcsi_final, by = "SUBJECT_ID")
+```
+
+(e5) Transfer Elixhauser icd 9 code to specific diseases and sum each person's elix score. (Collaborate with Kai Yan)
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+elix_code <- icds[(icds$SUBJECT_ID %in% first_table$SUBJECT_ID) & (icds$HADM_ID %in% first_table$HADM_ID), ]
+
+elix1 <- elix_code[elix_code$ICD9_CODE %in% c("53170", "53190", "53270", "53290","53370", "53390", "53470", 
+                                              "53490","V1271"), ]
+elix1 <- elix1[!duplicated(elix1$SUBJECT_ID), ]
+
+elix2 <- elix_code[elix_code$ICD9_CODE %in%  c("042") ,]
+elix2 <- elix2[!duplicated(elix2$SUBJECT_ID),]
+
+elix3 <- elix_code[elix_code$ICD9_CODE %in%  c(20000:20099,2386,2030,20200:20299,2038,2733,"V1071","V1072","V1079") ,]
+elix3 <- elix3[!duplicated(elix3$SUBJECT_ID),]
+
+elix4 <- elix_code[elix_code$ICD9_CODE %in%  c(1960:1999,19600:19999) ,]
+elix4 <- elix4[!duplicated(elix4$SUBJECT_ID),]
+
+elix5 <- elix_code[elix_code$ICD9_CODE %in%  c(179,185,193,1400:1729,1740:1959) ,]
+elix5 <- elix5[!duplicated(elix5$SUBJECT_ID),]
+
+elix6 <- elix_code[elix_code$ICD9_CODE %in% c(725,7100:7104,7108,7109,71120:71129,7140:7149,71430:71489,71930:71939,
+                                              7200:7209, 72081,72089,725,7285,72889,72930,4460:4467,44620,44621,44629) ,]
+elix6 <- elix6[!duplicated(elix6$SUBJECT_ID),]
+
+elix7 <- elix_code[elix_code$ICD9_CODE %in%  c(27800),]
+elix7 <- elix7[!duplicated(elix7$SUBJECT_ID),]
+
+elix8 <- elix_code[elix_code$ICD9_CODE %in%  c(28730:28749,2874,2875,2871,2860:2869,28652:28659),]
+elix8 <- elix8[!duplicated(elix8$SUBJECT_ID),]
+
+elix9 <- elix_code[elix_code$ICD9_CODE %in%  c(7994,260,261,262,2630:2639),]
+elix9 <- elix9[!duplicated(elix9$SUBJECT_ID),]
+
+elix10 <- elix_code[elix_code$ICD9_CODE %in%  c(2536,27650:27669,2760:2769),]
+elix10 <- elix10[!duplicated(elix10$SUBJECT_ID),]
+
+elix11 <- elix_code[elix_code$ICD9_CODE %in%  c(2800),]
+elix11 <- elix11[!duplicated(elix11$SUBJECT_ID),]
+
+elix12 <- elix_code[elix_code$ICD9_CODE %in%  c(2801:2819),]
+elix12 <- elix12[!duplicated(elix12$SUBJECT_ID),]
+
+elix13 <- elix_code[elix_code$ICD9_CODE %in% c("V113",2652,30300,30390,30500,3575,4255,53530,2911:2919,29181:29189,
+                                               5710:5713, 9800:9809),]
+elix13 <- elix13[!duplicated(elix13$SUBJECT_ID),]
+
+elix14 <- elix_code[elix_code$ICD9_CODE %in%  c("V6542",2920,2922,2929,29211:29289,30400:30493,30520:30593),]
+elix14 <- elix14[!duplicated(elix14$SUBJECT_ID),]
+
+elix15 <- elix_code[elix_code$ICD9_CODE %in%  c(29500:29595,29381:29389,29604,29614,29644,29654,2970:2989),]
+elix15 <- elix15[!duplicated(elix15$SUBJECT_ID),]
+
+elix16 <- elix_code[elix_code$ICD9_CODE %in%  c(29620:29636,29650:29656,3004,311,3091,3093,3094,3099,30921:30989),]
+elix16 <- elix16[!duplicated(elix16$SUBJECT_ID),]
+
+elix17 <- elix_code[elix_code$ICD9_CODE %in%  c(25040:25093),]
+elix17 <- elix17[!duplicated(elix17$SUBJECT_ID),]
+
+elix18 <- elix_code[elix_code$ICD9_CODE %in%  c(25000:25033),]
+elix18 <- elix18[!duplicated(elix10$SUBJECT_ID),]
+
+elix19 <- elix_code[elix_code$ICD9_CODE %in%  c(4010:4019),]
+elix19 <- elix19[!duplicated(elix19$SUBJECT_ID),]
+
+elix20 <- elix_code[elix_code$ICD9_CODE %in%  c(40200:40599),]
+elix20 <- elix20[!duplicated(elix20$SUBJECT_ID),]
+
+elix21 <- elix_code[elix_code$ICD9_CODE %in%  c(39891,40201,40211,40291,40401,40403,40493,40411,40413,40491,
+                                                4254:4259, 4280,4281, 4289,42820:42843),]
+elix21 <- elix21[!duplicated(elix21$SUBJECT_ID),]
+
+elix22 <- elix_code[elix_code$ICD9_CODE %in%  c(07022,07023,07032,07033,07044,07054,0706,0709,4560,4561,45620,45621,
+                                                570,5710:5719,57140:57149,5722:5728,5733,5734,5738,5739,"V427"),]
+elix22 <- elix22[!duplicated(elix22$SUBJECT_ID),]
+
+elix23 <- elix_code[elix_code$ICD9_CODE %in%  c(4260,42613,4267,4269,42610,42612,4279,4270,4271,4272,7850,99601,
+                                                99604, 42731:42742,42760:42789,"V450","V533"),]
+elix23 <- elix23[!duplicated(elix23$SUBJECT_ID),]
+
+elix24 <- elix_code[elix_code$ICD9_CODE %in%  c(09320,3940:3979,4240:4243,42490:42499,7463:7466,"V422","V433"),]
+elix24 <- elix24[!duplicated(elix24$SUBJECT_ID),]
+
+elix25 <- elix_code[elix_code$ICD9_CODE %in%  c(4150,4170,4178,4179,41511:41519,4160:4169),]
+elix25 <- elix25[!duplicated(elix25$SUBJECT_ID),]
+
+elix26 <- elix_code[elix_code$ICD9_CODE %in%  c(0930,4373,4431,4439,4471,5571,5579,"V434",4400:4419,44020:44103,
+                                                44321:44389),]
+elix26 <- elix26[!duplicated(elix26$SUBJECT_ID),]
+
+elix27 <- elix_code[elix_code$ICD9_CODE %in%  c(2409,243,2461,2468,2240:2449),]
+elix27 <- elix27[!duplicated(elix27$SUBJECT_ID),]
+
+elix28 <- elix_code[elix_code$ICD9_CODE %in%  c(3341,3441,3442,3445,3449,34400:34461,3430:3439,34200:34292),]
+elix28 <- elix28[!duplicated(elix28$SUBJECT_ID),]
+
+elix29 <- elix_code[elix_code$ICD9_CODE %in%  c(40301,40311,40391,40402,40403,40412,40413,40492,40493,5851:5859,
+                                                586,5880, "V420","V451","V560","V562","V568"),]
+elix29 <- elix29[!duplicated(elix29$SUBJECT_ID),]
+
+elix30 <- elix_code[elix_code$ICD9_CODE %in%  c(3319,3320,3321,3334,3335,33392,3340:3350,33510:33529,3358,3359,340,
+                                                3410:3419, 34120:34122,34500:34591,3452,3453,34830:34839,78031:78039,
+                                                3362,3481,7843),]
+elix30 <- elix30[!duplicated(elix30$SUBJECT_ID),]
+
+elix31 <- elix_code[elix_code$ICD9_CODE %in%  c(490:505,4910:4959,49120:49392,4168,4169,5064,5081,5088),]
+elix31 <- elix31[!duplicated(elix31$SUBJECT_ID),]
+
+elix_all <- rbind(elix1,elix2,elix3,elix4,elix5,elix6,elix7,elix8,elix9,elix10,elix11,elix12,elix13,elix14,elix15,
+                  elix16, elix17,elix18,elix19,elix20,elix21,elix22,elix23,elix24,elix25,elix26,elix27,elix28,
+                  elix29,elix30,elix31)
+
+ELIX_SCORE <- matrix(1, nrow=nrow(elix_all))
+elix_all <- cbind(elix_all, ELIX_SCORE)
+elix_sum <- aggregate(elix_all$ELIX_SCORE, by = list(elix_all$SUBJECT_ID), sum)
+colnames(elix_sum)[1] <- "SUBJECT_ID"
+colnames(elix_sum)[2] <- "ELIX_SCORE"
+
+elix_final <- elix_sum
+first_table <- full_join(first_table, elix_final, by = "SUBJECT_ID")
+```
+
+(e6) Transfer Charlson Comorbidities icd 9 code to specific diseases and sum each person's CCI scores 
+     according to severity of seperate disease. (Collaborate with Kai Yan)
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+cci_code <- icds[(icds$SUBJECT_ID %in% first_table$SUBJECT_ID) & (icds$HADM_ID %in% first_table$HADM_ID), ]
+
+cci_two_plegia <- cci_code[cci_code$ICD9_CODE %in% c("3341", 34200:34202, 34210:34212, 34280:34282, 34290:34292,
+                                                      3430:3434, 3440:3446, 34400:34469, "3449", 34490:34499), ]
+cci_two_plegia <- cci_two_plegia[!duplicated(cci_two_plegia$SUBJECT_ID),]
+cci_two_renal <- cci_code[cci_code$ICD9_CODE %in% c(40300:40301, 40310:40311, 40390:40391, 40400:40493, 5820:5824, 
+                                                    5829:5837, 5850:5859, 5860:5869, 5880:5889, "58181", "58189", 
+                                                    "58281", "58289","58381", "58389", "V420", "V451", "V560", 
+                                                    "V561", "V562", "V568"), ]
+cci_two_renal <- cci_two_renal[!duplicated(cci_two_renal$SUBJECT_ID),]
+cci_two_diab <- cci_code[cci_code$ICD9_CODE %in% c(25040:25079), ]
+cci_two_diab <- cci_two_diab[!duplicated(cci_two_diab$SUBJECT_ID),]
+cci_two_malig <- cci_code[cci_code$ICD9_CODE %in% c(1400:1730, 1740:1958, 20000:20899, "2386", "V420", "V451", 
+                                                    "V560", "V561", "V562", "V568"), ]
+cci_two_malig <- cci_two_malig[!duplicated(cci_two_malig$SUBJECT_ID),]
+
+cci_two <- rbind(cci_two_plegia, cci_two_renal, cci_two_diab, cci_two_malig)
+CCI_SCORE <- matrix(2, nrow=nrow(cci_two))
+cci_two <- cbind(cci_two, CCI_SCORE)
+
+
+cci_three <- cci_code[cci_code$ICD9_CODE %in% c(4560:4561, 45620:45621, 5722:5728), ]
+cci_three <- cci_three[!duplicated(cci_three$SUBJECT_ID),]
+
+CCI_SCORE <- matrix(3, nrow=nrow(cci_three))
+cci_three <- cbind(cci_three, CCI_SCORE)
+
+
+cci_six_soltm <- cci_code[cci_code$ICD9_CODE %in% c(1960:1999, 19880:19889), ]
+cci_six_soltm <- cci_six_soltm[!duplicated(cci_six_soltm$SUBJECT_ID),]
+cci_six_aids <- cci_code[cci_code$ICD9_CODE %in% c("042", "043", "044"), ]
+cci_six_aids <- cci_six_aids[!duplicated(cci_six_aids$SUBJECT_ID),]
+
+cci_six <- rbind(cci_six_soltm, cci_six_aids)
+CCI_SCORE <- matrix(6, nrow=nrow(cci_six))
+cci_six <- cbind(cci_six, CCI_SCORE)
+
+
+cci_one_mycar <- cci_code[cci_code$ICD9_CODE %in% c(41000:41099, "412"), ]
+cci_one_mycar <- cci_one_mycar[!duplicated(cci_one_mycar$SUBJECT_ID),]
+cci_one_chf <- cci_code[cci_code$ICD9_CODE %in% c(39890:39891, "39899", "40401", "40403", "40411", "40413", "40491",
+                                                  "40493", 4254:4259, 4280:4289, 42800:42899), ]
+cci_one_chf <- cci_one_chf[!duplicated(cci_one_chf$SUBJECT_ID),]
+cci_one_pvd <- cci_code[cci_code$ICD9_CODE %in% c("0930", 4373:4374, 4378:4389, 4400:4409, 44000:44099, 4410:4419, 
+                                                  44100:44199, 4431:4439, 44310:44399, 4471:4479, 5571:5579, "V434"), ]
+cci_one_pvd <- cci_one_pvd[!duplicated(cci_one_pvd$SUBJECT_ID),]
+cci_one_cervar <- cci_code[cci_code$ICD9_CODE %in% c(36230:36239, 4300:4389, 43000:43899), ]
+cci_one_cervar <- cci_one_cervar[!duplicated(cci_one_cervar$SUBJECT_ID),]
+cci_one_dement <- cci_code[cci_code$ICD9_CODE %in% c(2900:2909, 29000:29099, 29410:29419, "3312"), ]
+cci_one_dement <- cci_one_dement[!duplicated(cci_one_dement$SUBJECT_ID),]
+cci_one_pulm <- cci_code[cci_code$ICD9_CODE %in% c(4168:4169, 4900:5050, 49000:50599, "5064", "5081", "5088"), ]
+cci_one_pulm <- cci_one_pulm[!duplicated(cci_one_pulm$SUBJECT_ID),]
+cci_one_rheu <- cci_code[cci_code$ICD9_CODE %in% c("4465", 7100:7104, 7140:7142, "71481", "725"), ]
+cci_one_rheu <- cci_one_rheu[!duplicated(cci_one_rheu$SUBJECT_ID),]
+cci_one_peptic <- cci_code[cci_code$ICD9_CODE %in% c(53100:53499), ]
+cci_one_peptic <- cci_one_peptic[!duplicated(cci_one_peptic$SUBJECT_ID),]
+cci_one_liver <- cci_code[cci_code$ICD9_CODE %in% c(07022:07023, 07032:07033, "07044", "07054", "0706", "0709", "570",
+                                                    5710:5719, 57100:57199, 5733:5734, 5738:5739, "V427"), ]
+cci_one_liver <- cci_one_liver[!duplicated(cci_one_liver$SUBJECT_ID),]
+cci_one_diab <- cci_code[cci_code$ICD9_CODE %in% c(25000:25039, 25080:25099), ]
+cci_one_diab <- cci_one_diab[!duplicated(cci_one_diab$SUBJECT_ID),]
+
+cci_one <- rbind(cci_one_mycar, cci_one_chf, cci_one_pvd, cci_one_cervar, cci_one_dement, cci_one_pulm, cci_one_rheu,
+                 cci_one_peptic, cci_one_liver, cci_one_diab)
+CCI_SCORE <- matrix(1, nrow=nrow(cci_one))
+cci_one <- cbind(cci_one, CCI_SCORE)
+
+
+cci_all <- rbind(cci_two, cci_three, cci_six, cci_two, cci_one)
+cci_sum <- aggregate(cci_all$CCI_SCORE, by = list(cci_all$SUBJECT_ID), sum)
+colnames(cci_sum)[1] <- "SUBJECT_ID"
+colnames(cci_sum)[2] <- "CCI_SCORE"
+
+cci_final <- cci_sum
+first_table <- full_join(first_table, cci_final, by = "SUBJECT_ID")
+
+add_age <- first_table[, c("AGE", "CCI_SCORE")]
+add_age$CCI_AGE <- ifelse(add_age$AGE == "<50", 0,
+		            ifelse(add_age$AGE == "50-59", 1,
+		            ifelse(add_age$AGE == "60-69", 2,
+		            ifelse(add_age$AGE == "70-79", 3, 4))))
+add_age$CCI_SCORE <- add_age$CCI_SCORE + add_age$CCI_AGE
+first_table$CCI_SCORE <- add_age$CCI_SCORE
+```
+
+(f) Exclude patients without glucose or HbA1c value:
+    (individual work)
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+final_table <- first_table[order(first_table$SUBJECT_ID), , drop=FALSE]
+final_table <- final_table[is.na(final_table$HbA1c_VALUE) == FALSE, ]
+final_table <- final_table[is.na(final_table$GLUCOSE_VALUE) == FALSE, ]
+final_table$INSULIN_STATUS[is.na(final_table$INSULIN_STATUS)] <- 0
+head(final_table)
+```
+
+#6. Data visualization & statistics:
+
+(a) View the distribution of six variables of interest.(used to set interval later in model) (individual work)
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+#par(mfrow=c(2,3))
+gv <- ggplot(final_table) + 
+      geom_histogram(aes(x=GLUCOSE_VALUE)) +
+      ggtitle('Glucose Value Distribution') +
+      NULL
+hv <- ggplot(final_table) + 
+      geom_histogram(aes(x=HbA1c_VALUE)) +
+      ggtitle('HbA1c Value distribution') +
+      NULL
+is <- ggplot(final_table) + 
+      geom_bar(aes(x=INSULIN_STATUS, fill=INSULIN_STATUS)) + 
+      theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+      ggtitle('Insulin Status distribution') +
+      NULL
+ds <- ggplot(final_table) + 
+      geom_bar(aes(x=DCSI_SCORE, fill=DCSI_SCORE)) + 
+      theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+      ggtitle('DCSI Score distribution') +
+      NULL
+es <- ggplot(final_table) + 
+      geom_bar(aes(x=ELIX_SCORE, fill=ELIX_SCORE)) + 
+      theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+      ggtitle('ELIX Score distribution') +
+      NULL
+cs <- ggplot(final_table) + 
+      geom_bar(aes(x=CCI_SCORE, fill=CCI_SCORE)) + 
+      theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+      ggtitle('CCI Score distribution') +
+      NULL
+
+ggarrange(gv, hv, is, ds, es, cs, 
+          labels = c("A", "B", "C", "D", "E", "F"),
+          ncol = 2, nrow = 3)
+```
+
+(b) Calculate mean value of each variable of alive and dead. (individual work)
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+alive <- final_table[final_table$MORT_IN_30_DAY == 0, ]
+alive_glucose <- mean(alive$GLUCOSE_VALUE, na.rm=TRUE)
+alive_hba1c <- mean(alive$HbA1c_VALUE, na.rm=TRUE)
+alive_insulin <- mean(alive$INSULIN_STATUS, na.rm=TRUE)
+alive_dcsi <- mean(alive$DCSI_SCORE, na.rm=TRUE)
+alive_elix <- mean(alive$ELIX_SCORE, na.rm=TRUE)
+alive_cci <- mean(alive$CCI_SCORE, na.rm=TRUE)
+alive_mean <- cbind(alive_glucose, alive_hba1c, alive_insulin, alive_dcsi, alive_elix, alive_cci)
+colnames(alive_mean)[1:6] <- c("Glucose mean", "HbA1c mean", "Insulin mean", "DCSI mean", "Elix mean", "CCI mean")
+rownames(alive_mean)[1] <- "Alive"
+
+death <- final_table[final_table$MORT_IN_30_DAY == 1, ]
+death_glucose <- mean(death$GLUCOSE_VALUE, na.rm=TRUE)
+death_hba1c <- mean(death$HbA1c_VALUE, na.rm=TRUE)
+death_insulin <- mean(death$INSULIN_STATUS, na.rm=TRUE)
+death_dcsi <- mean(death$DCSI_SCORE, na.rm=TRUE)
+death_elix <- mean(death$ELIX_SCORE, na.rm=TRUE)
+death_cci <- mean(death$CCI_SCORE, na.rm=TRUE)
+death_mean <- cbind(death_glucose, death_hba1c, death_insulin, death_dcsi, death_elix, death_cci)
+colnames(death_mean)[1:6] <- c("Glucose mean", "HbA1c mean", "Insulin mean", "DCSI mean", "Elix mean", "CCI mean")
+rownames(death_mean)[1] <- "Dead"
+
+mean_table1 <- rbind(alive_mean, death_mean)
+as.table(t(mean_table1))
+```
+
+(d) Visualize distribution of age, gender, ethnicity, insurance and admission type of alive and dead as well as mortality. 
+    (individual work)
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+alive_age <- ggplot(alive) + 
+             geom_bar(aes(x=AGE, fill=AGE)) + 
+             theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+             ggtitle('alive age distribution') +
+             NULL
+alive_gender <- ggplot(alive) + 
+                geom_bar(aes(x=GENDER, fill=GENDER)) + 
+                theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+                ggtitle('alive gender distribution') +
+                NULL
+alive_ethnicity <- ggplot(alive) + 
+                   geom_bar(aes(x=ETHNICITY, fill=ETHNICITY)) + 
+                   theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+                   ggtitle('alive ethnicity distribution') +
+                   NULL
+alive_insurance <- ggplot(alive) + 
+                   geom_bar(aes(x=INSURANCE, fill=INSURANCE)) + 
+                   theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+                   ggtitle('alive insurance distribution') +
+                   NULL
+alive_admtype <- ggplot(alive) + 
+                 geom_bar(aes(x=ADMISSION_TYPE, fill=ADMISSION_TYPE)) + 
+                 theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+                 ggtitle('alive admission type distribution') +
+                 NULL
+
+ggarrange(alive_age, alive_gender, alive_ethnicity, alive_insurance, alive_admtype, 
+          labels = c("A", "B", "C", "D", "E"),
+          ncol = 2, nrow = 3)
+
+
+dead_age <- ggplot(death) + 
+             geom_bar(aes(x=AGE, fill=AGE)) + 
+             theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+             ggtitle('dead age distribution') +
+             NULL
+dead_gender <- ggplot(death) + 
+                geom_bar(aes(x=GENDER, fill=GENDER)) + 
+                theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+                ggtitle('dead gender distribution') +
+                NULL
+dead_ethnicity <- ggplot(death) + 
+                   geom_bar(aes(x=ETHNICITY, fill=ETHNICITY)) + 
+                   theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+                   ggtitle('dead ethnicity distribution') +
+                   NULL
+dead_insurance <- ggplot(death) + 
+                   geom_bar(aes(x=INSURANCE, fill=INSURANCE)) + 
+                   theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+                   ggtitle('dead insurance distribution') +
+                   NULL
+dead_admtype <- ggplot(death) + 
+                 geom_bar(aes(x=ADMISSION_TYPE, fill=ADMISSION_TYPE)) + 
+                 theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+                 ggtitle('dead admission type distribution') +
+                 NULL
+
+ggarrange(dead_age, dead_gender, dead_ethnicity, dead_insurance, dead_admtype, 
+          labels = c("A", "B", "C", "D", "E"),
+          ncol = 2, nrow = 3)
+
+
+all_age <- ggplot(final_table) + 
+             geom_bar(aes(x=AGE, fill=AGE)) + 
+             theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+             ggtitle('Age distribution') +
+             NULL
+all_gender <- ggplot(final_table) + 
+                geom_bar(aes(x=GENDER, fill=GENDER)) + 
+                theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+                ggtitle('Gender distribution') +
+                NULL
+all_ethnicity <- ggplot(final_table) + 
+                   geom_bar(aes(x=ETHNICITY, fill=ETHNICITY)) + 
+                   theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+                   ggtitle('Ethnicity distribution') +
+                   NULL
+all_insurance <- ggplot(final_table) + 
+                   geom_bar(aes(x=INSURANCE, fill=INSURANCE)) + 
+                   theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+                   ggtitle('Insurance distribution') +
+                   NULL
+all_admtype <- ggplot(final_table) + 
+                 geom_bar(aes(x=ADMISSION_TYPE, fill=ADMISSION_TYPE)) + 
+                 theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+                 ggtitle('Admission Type distribution') +
+                 NULL
+all_mort <- ggplot(final_table) + 
+            geom_bar(aes(x=MORT_IN_30_DAY, fill=MORT_IN_30_DAY)) + 
+            theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+            ggtitle('Mortality within 30 days') +
+            NULL
+
+ggarrange(all_age, all_gender, all_ethnicity, all_insurance, all_admtype, all_mort,
+          labels = c("A", "B", "C", "D", "E", "F"),
+          ncol = 2, nrow = 3)
+```
+
+
+#7. Data Analytics Methods & experimental results:(results include after most chunks)
+
+(a) Use binomial logisstic regression to view how different variables impact diabetic mortality in terms of
+    p-value and odds ratio.
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+log_model_1 <- glm(MORT_IN_30_DAY ~ GLUCOSE_VALUE + HbA1c_VALUE + INSULIN_STATUS + ELIX_SCORE + DCSI_SCORE + 
+                CCI_SCORE, data = final_table, family=binomial())
+summary(log_model_1)
+exp(cbind(OR=coef(log_model_1)))
+```
+Result: glucose value, HbA1c value insulin status and CCI score have small p-value, 
+        so they influence mortality rate significantly.
+        In addition, glucose, elix and cci influence mortality positively, while HbA1c, insulin and dcsi
+        influence mortality negatively. (individual work)
+
+(b) According to the distribution of each the score/value of each variable,
+    seperate each variable into 5-6 intervals, set a reference, and then run logistic regression model, so we can analyze
+    which interval of each variable has the highest mortality in terms of odds ratio.
+    Result is in the table after this chunk. (individual work)
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+final_table$CCI_INTERVAL <- ifelse(final_table$CCI_SCORE >= 1 & final_table$CCI_SCORE <= 4, "1-4",
+                            ifelse(final_table$CCI_SCORE >= 5 & final_table$CCI_SCORE <= 8, "5-8",
+                            ifelse(final_table$CCI_SCORE >= 9 & final_table$CCI_SCORE <= 12, "9-12",
+                            ifelse(final_table$CCI_SCORE >= 13 & final_table$CCI_SCORE <= 16, "13-16",
+                            ifelse(final_table$CCI_SCORE >= 17 & final_table$CCI_SCORE <= 20, "17-20", 
+                                   "21+")))))
+
+final_table$GLUCOSE_INTERVAL <- ifelse(is.na(final_table$GLUCOSE_VALUE) == TRUE, "NA",
+                                ifelse(final_table$GLUCOSE_VALUE <= 100, "100-",
+                                ifelse(final_table$GLUCOSE_VALUE >= 101 & final_table$GLUCOSE_VALUE <= 120, "101-120",
+                                ifelse(final_table$GLUCOSE_VALUE >= 121 & final_table$GLUCOSE_VALUE <= 140, "121-140",
+                                ifelse(final_table$GLUCOSE_VALUE >= 141 & final_table$GLUCOSE_VALUE <= 160, "141-160",
+                                ifelse(final_table$GLUCOSE_VALUE >= 161 & final_table$GLUCOSE_VALUE <= 180, "161-180",
+                                ifelse(final_table$GLUCOSE_VALUE >= 181 & final_table$GLUCOSE_VALUE <= 200, "181-200",
+                                       "201+")))))))
+
+final_table$HbA1c_INTERVAL <- ifelse(is.na(final_table$HbA1c_VALUE) == TRUE, "NA",
+                              ifelse(final_table$HbA1c_VALUE <= 5.5, "5.5-",
+                              ifelse(final_table$HbA1c_VALUE > 5.5 & final_table$HbA1c_VALUE <= 6.5, "5.5-6.5",
+                              ifelse(final_table$HbA1c_VALUE > 6.5 & final_table$HbA1c_VALUE <= 7.5, "6.5-7.5",
+                              ifelse(final_table$HbA1c_VALUE > 7.5 & final_table$HbA1c_VALUE <= 8.5, "7.5-8.5",
+                              ifelse(final_table$HbA1c_VALUE > 8.5 & final_table$HbA1c_VALUE <= 11.5, "8.5-11.5",
+                                     "11.5+"))))))
+
+final_table$DCSI_INTERVAL <- ifelse(final_table$DCSI_SCORE == 0 | final_table$DCSI_SCORE == 1, "0&1",
+                             ifelse(final_table$DCSI_SCORE == 2, "2",
+                             ifelse(final_table$DCSI_SCORE == 3 | final_table$DCSI_SCORE == 4, "3&4",
+                                    "5+")))
+
+final_table$ELIX_INTERVAL <- ifelse(final_table$ELIX_SCORE == 1 | final_table$ELIX_SCORE == 2, "1&2",
+                             ifelse(final_table$ELIX_SCORE == 3 | final_table$ELIX_SCORE == 4, "3&4",
+                             ifelse(final_table$ELIX_SCORE == 5 | final_table$ELIX_SCORE == 6, "5&6",
+                                    "7+")))
+
+final_table$INSULIN_INTERVAL <- ifelse(final_table$INSULIN_STATUS == 1, "1", "0")
+
+final_table$CCI_INTERVAL <- as.factor(final_table$CCI_INTERVAL)
+final_table$GLUCOSE_INTERVAL <- as.factor(final_table$GLUCOSE_INTERVAL)
+final_table$HbA1c_INTERVAL <- as.factor(final_table$HbA1c_INTERVAL)
+final_table$DCSI_INTERVAL <- as.factor(final_table$DCSI_INTERVAL)
+final_table$ELIX_INTERVAL <- as.factor(final_table$ELIX_INTERVAL)
+final_table$INSULIN_INTERVAL <- as.factor(final_table$INSULIN_INTERVAL)
+final_table <- within(final_table, GLUCOSE_INTERVAL <- relevel(GLUCOSE_INTERVAL, ref = "141-160"))
+final_table <- within(final_table, HbA1c_INTERVAL <- relevel(HbA1c_INTERVAL, ref = "6.5-7.5"))
+final_table <- within(final_table, CCI_INTERVAL <- relevel(CCI_INTERVAL, ref = "9-12"))
+final_table <- within(final_table, DCSI_INTERVAL <- relevel(DCSI_INTERVAL, ref = "2"))
+final_table <- within(final_table, ELIX_INTERVAL <- relevel(ELIX_INTERVAL, ref = "3&4"))
+final_table <- within(final_table, INSULIN_INTERVAL <- relevel(INSULIN_INTERVAL, ref = "1"))
+
+log_model_2 <- glm(MORT_IN_30_DAY ~ GLUCOSE_INTERVAL + HbA1c_INTERVAL + CCI_INTERVAL + DCSI_INTERVAL + ELIX_INTERVAL +
+                   INSULIN_INTERVAL, data = final_table, family=binomial())
+summary(log_model_2)
+exp(cbind(OR=coef(log_model_2)))
+```
+Result: (1) For glucose, overlarge values(>200) mean high mortality rate, on the contrary, low mortality rate appear
+            in the middle interval(101-160).
+        (2) For HbA1c, mortality mainly increases as HbA1c value increases, except the order in interval 6.5-8.5 reverses.
+        (3) For CCI, mortality rate is proportional to CCI SCORE.
+        (4) For DCSI, mortality rate is highest in the middle interval (2, then 3&4), and is low on both ends.
+        (5) For ELIX, mortality rate is proportinal to ELIX score.
+        (6) People without insulin status are more likely to die.
+        
+(c) The table below is "Likelihood of mortality of each variable in descending order". (individual work)
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+log_vector <- c("201+", "161-180", "180-200", "141-160", "100-", "121-140", "101-120",
+                "5.5-", "5.5-6.5", "6.5-7.5", "7.5-8.5", "8.5-11.5", "11.5+", NA,
+                "21+", "17-20", "13-16", "9-12", "5-8", "1-4", NA,
+                "2", "5+", "3&4", "0&1", NA, NA, NA,
+                "7+", "5&6", "3&4", "1&2", NA, NA, NA,
+                "0", "1", NA, NA, NA, NA, NA)
+log_table <- matrix(log_vector, nrow=7, ncol=6)
+colnames(log_table)[1:6] <- c("Glucose interval", "HbA1c interval", "CCI interval", "DCSI interval",
+                              "ELIX interval", "Insulin Status")
+as.table(log_table)
+```
+
+(d) Set 70% of data to training, and remaining 30% to testing. Use the model creating on training set (interval variable)
+    to predict the testing set, and plot a receiver operating curve of specificity and sencitivity.
+    Note: I try multiple thresholds, and find 0.06 closed to the most accurate. (individual work)
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+trainnum <- 2920
+set.seed(200)
+trainrandom <- sample(1:nrow(final_table), trainnum)
+log_train <- final_table[trainrandom, ]
+log_test <- final_table[-trainrandom, ]
+
+log_model_3 <- glm(MORT_IN_30_DAY ~ CCI_INTERVAL + DCSI_INTERVAL + ELIX_INTERVAL + GLUCOSE_INTERVAL +
+                   HbA1c_INTERVAL + INSULIN_INTERVAL,
+                   data = log_train, family = binomial())
+log_comb_mod = predict(log_model_3, newdata = log_test, type='response')
+log_comb_pred <- ifelse(log_comb_mod > 0.06, '1', '0')
+
+log_comb_rst <- confusionMatrix(log_comb_pred, positive="1", log_test$MORT_IN_30_DAY)
+log_comb_rst
+log_table <- table(log_comb_pred, log_test$MORT_IN_30_DAY)
+log_table
+```
+Result: 
+The combined logistic regression shows decent sensitivity(0.672) and specificity(0.665) with balanced accuracy of 66.8%,
+which is better than seperate model(run each variable respectively).
+
+(e) Similarly, run randomforest model and predict testing data with number of trees=500 and threshold=0.06.
+(Collaborate with Kai Yan)
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+randomforest_model <- randomForest(MORT_IN_30_DAY~ CCI_INTERVAL + DCSI_INTERVAL + ELIX_INTERVAL + GLUCOSE_INTERVAL +
+                   HbA1c_INTERVAL + INSULIN_INTERVAL, log_train, ntree=500, importance=T, na.action=na.omit)
+plot(randomforest_model)
+
+rf_mod <- predict(randomforest_model, newdata = log_test)
+rf_pred <- ifelse(rf_mod > 0.065, '1', '0')
+rf_rst <- confusionMatrix(rf_pred, positive="1", log_test$MORT_IN_30_DAY)
+rf_rst
+```
+Result: Randomforest model also shows decent sensitivity(0.616) and specificity(0.693) with balanced accuracy of 65.5%,
+        a bit lower than logistic regression, but is also a recommended model for mortality prediction.
+
+(f) Table of sensitivity, specificity and balanced accuracy of logistic and randomforest model using different thresholds. 
+    (individual work)
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+model_result <- matrix(NA, nrow=7, ncol=7)
+for (i in (1:7)) {
+  logloop <- glm(MORT_IN_30_DAY ~ CCI_INTERVAL + DCSI_INTERVAL + ELIX_INTERVAL + GLUCOSE_INTERVAL +
+                 HbA1c_INTERVAL + INSULIN_INTERVAL,
+                 data = log_train, family = binomial())
+  log_loop_mod = predict(logloop, newdata = log_test, type='response')
+  log_loop_pred <- ifelse(log_loop_mod > (0+i*0.02), '1', '0')
+  log_loop_table <- table(log_loop_pred, log_test$MORT_IN_30_DAY)
+  
+  rfloop <- randomForest(MORT_IN_30_DAY~ CCI_INTERVAL + DCSI_INTERVAL + ELIX_INTERVAL + GLUCOSE_INTERVAL +
+                   HbA1c_INTERVAL + INSULIN_INTERVAL, log_train, ntree=500, importance=T, na.action=na.omit)
+  rf_loop_mod <- predict(rfloop, newdata = log_test)
+  rf_loop_pred <- ifelse(rf_loop_mod > (0+i*0.02), '1', '0')
+  rf_loop_table <- table(rf_loop_pred, log_test$MORT_IN_30_DAY)
+  
+  options(digits=3)
+  model_result[i, ] <- c(0+i*0.02, percent(log_loop_table[2,2] / (log_loop_table[2,2] + log_loop_table[1,2])),
+                                      percent(log_loop_table[1,1] / (log_loop_table[1,1] + log_loop_table[2,1])),
+                                      percent((log_loop_table[2,2] / (log_loop_table[2,2] + log_loop_table[1,2])+
+                                      log_loop_table[1,1] / (log_loop_table[1,1] + log_loop_table[2,1])) / 2),
+                                      percent(rf_loop_table[2,2] / (rf_loop_table[2,2] + rf_loop_table[1,2])),
+                                      percent(rf_loop_table[1,1] / (rf_loop_table[1,1] + rf_loop_table[2,1])),
+                                      percent((rf_loop_table[2,2] / (rf_loop_table[2,2] + rf_loop_table[1,2])+
+                                      rf_loop_table[1,1] / (rf_loop_table[1,1] + rf_loop_table[2,1])) / 2))
+}
+colnames(model_result)[1:7] <- c("Threshold", "Log Sens", "Log Spec", "Log Bal_Acc",
+                                   "Randf Sens", "Randf Spec", "Randf Bal_Acc")
+as.table(model_result)
+```
+
+(g) Plot Receiver operating characteristics curve for visualization. (individual work)
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+auc(roc(log_test$MORT_IN_30_DAY, log_comb_mod, direction = "<"))
+auc(roc(log_test$MORT_IN_30_DAY, rf_mod, direction = "<"))
+
+roc1 = roc(log_test$MORT_IN_30_DAY, log_comb_mod)
+roc2 = roc(log_test$MORT_IN_30_DAY, rf_mod)
+plot(roc1, col = 2, lty = 2, main = "Specificity-Sensitivity Curve of logistic regression VS 
+     randomforest model", xlim = range(0:1.25))
+plot(roc2, col = 4, lty = 3, add = TRUE)
+```
+Note: We see curve of randomforest is a little flat than logistic, and area under curve is a little bit smaller.
+      (randomforest 0.69 compared with logistic 0.72)
+
+(i) Read the synthetic file and randomly choose 6000 samples:
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+die_syn <- read.csv("~/data_mimic/MIMIC_synthetic/mimic_diabetics_2018_08_13/mimic_diabetics_synthetic.csv")
+set.seed(350)
+syn_need <- sample(1:nrow(die_syn), 8000)
+die_syn <- die_syn[syn_need, ]
+head(die_syn)
+```
+
+(j) Calculate mean value of all variables of alive and dead patients of synthetic data:
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+alive_syn <- die_syn[die_syn$MORT_IN_30_DAY == 0, ]
+alive_glucose_syn <- mean(alive_syn$GLUCOSE_VALUE, na.rm=TRUE)
+alive_HbA1c_syn <- mean(alive_syn$HbA1c_VALUE, na.rm=TRUE)
+alive_insulin_syn <- mean(alive_syn$INSULIN_STATUS, na.rm=TRUE)
+alive_dcsi_syn <- mean(alive_syn$DCSI_SCORE, na.rm=TRUE)
+alive_elix_syn <- mean(alive_syn$ELIX_SCORE, na.rm=TRUE)
+alive_cci_syn <- mean(alive_syn$CCI_SCORE, na.rm=TRUE)
+alive_mean_syn <- cbind(alive_glucose_syn, alive_HbA1c_syn, alive_insulin_syn, alive_dcsi_syn, alive_elix_syn, 
+                        alive_cci_syn)
+colnames(alive_mean_syn)[1:6] <- c("Glucose mean", "HbA1c mean", "Insulin mean", "DCSI mean", "Elix mean", 
+                                   "CCI mean")
+rownames(alive_mean_syn)[1] <- "Alive"
+
+death_syn <- die_syn[die_syn$MORT_IN_30_DAY == 1, ]
+death_glucose_syn <- mean(death_syn$GLUCOSE_VALUE, na.rm=TRUE)
+death_HbA1c_syn <- mean(death_syn$HbA1c_VALUE, na.rm=TRUE)
+death_insulin_syn <- mean(death_syn$INSULIN_STATUS, na.rm=TRUE)
+death_dcsi_syn <- mean(death_syn$DCSI_SCORE, na.rm=TRUE)
+death_elix_syn <- mean(death_syn$ELIX_SCORE, na.rm=TRUE)
+death_cci_syn <- mean(death_syn$CCI_SCORE, na.rm=TRUE)
+death_mean_syn <- cbind(death_glucose_syn, death_HbA1c_syn, death_insulin_syn, death_dcsi_syn, death_elix_syn, 
+                        death_cci_syn)
+colnames(death_mean_syn)[1:6] <- c("Glucose mean", "HbA1c mean", "Insulin mean", "DCSI mean", "Elix mean", 
+                                   "CCI mean")
+rownames(death_mean_syn)[1] <- "Dead"
+
+mean_table2 <- rbind(alive_mean_syn, death_mean_syn)
+as.table(t(mean_table2))
+```
+
+(k) Combined logistic regression model of synthetic data;
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+log_syn_1 <- glm(MORT_IN_30_DAY ~ GLUCOSE_VALUE + HbA1c_VALUE + INSULIN_STATUS + ELIX_SCORE + DCSI_SCORE + CCI_SCORE,
+                 data = die_syn, family=binomial())
+summary(log_syn_1)
+exp(cbind(OR=coef(log_syn_1)))
+```
+Result: We find glucose value, HbA1c value, ELIX and CCI score most important.
+
+(l) Data visualization of distribution of variables of interest and mortality of synthetic data:
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+gv1 <- ggplot(die_syn) + 
+      geom_histogram(aes(x=GLUCOSE_VALUE)) +
+      ggtitle('Glucose Value Distribution') +
+      NULL
+hb1 <- ggplot(die_syn) + 
+      geom_histogram(aes(x=HbA1c_VALUE)) +
+      ggtitle('HbA1c Value Distribution') +
+      NULL
+is1 <- ggplot(die_syn) + 
+      geom_bar(aes(x=INSULIN_STATUS, fill=INSULIN_STATUS)) + 
+      theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+      ggtitle('Insulin Status distribution') +
+      NULL
+ds1 <- ggplot(die_syn) + 
+      geom_bar(aes(x=DCSI_SCORE, fill=DCSI_SCORE)) + 
+      theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+      ggtitle('DCSI Score distribution') +
+      NULL
+es1 <- ggplot(die_syn) + 
+      geom_bar(aes(x=ELIX_SCORE, fill=ELIX_SCORE)) + 
+      theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+      ggtitle('ELIX Score distribution') +
+      NULL
+cs1 <- ggplot(die_syn) + 
+      geom_bar(aes(x=CCI_SCORE, fill=CCI_SCORE)) + 
+      theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+      ggtitle('CCI Score distribution') +
+      NULL
+ggarrange(gv1, hb1, is1, ds1, es1, cs1,
+          labels = c("A", "B", "C", "D", "E", "F"),
+          ncol = 2, nrow = 3)
+ggplot(die_syn) + 
+    geom_bar(aes(x=MORT_IN_30_DAY, fill=MORT_IN_30_DAY)) + 
+    theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+    ggtitle('Mortality') +
+    NULL
+```
+
+(m) Set interval of each variable of synthetic, and then set reference and run logistic regression again
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+die_syn$CCI_INTERVAL <- ifelse(die_syn$CCI_SCORE >= 1 & die_syn$CCI_SCORE <= 4, "1-4",
+                            ifelse(die_syn$CCI_SCORE >= 5 & die_syn$CCI_SCORE <= 8, "5-8",
+                            ifelse(die_syn$CCI_SCORE >= 9 & die_syn$CCI_SCORE <= 12, "9-12",
+                            ifelse(die_syn$CCI_SCORE >= 13 & die_syn$CCI_SCORE <= 16, "13-16",
+                            ifelse(die_syn$CCI_SCORE >= 17 & die_syn$CCI_SCORE <= 20, "17-20", 
+                                   "21+")))))
+
+die_syn$INSULIN_INTERVAL <- ifelse(is.na(die_syn$INSULIN_STATUS) == TRUE, "NA",
+                            ifelse(die_syn$INSULIN_STATUS == 1, "1",
+                                   "0"))
+
+die_syn$GLUCOSE_INTERVAL <- ifelse(is.na(die_syn$GLUCOSE_VALUE) == TRUE, "NA",
+                                ifelse(die_syn$GLUCOSE_VALUE <= 100, "100-",
+                                ifelse(die_syn$GLUCOSE_VALUE >= 101 & die_syn$GLUCOSE_VALUE <= 120, "101-120",
+                                ifelse(die_syn$GLUCOSE_VALUE >= 121 & die_syn$GLUCOSE_VALUE <= 140, "121-140",
+                                ifelse(die_syn$GLUCOSE_VALUE >= 141 & die_syn$GLUCOSE_VALUE <= 160, "141-160",
+                                ifelse(die_syn$GLUCOSE_VALUE >= 161 & die_syn$GLUCOSE_VALUE <= 180, "161-180",
+                                ifelse(die_syn$GLUCOSE_VALUE >= 181 & die_syn$GLUCOSE_VALUE <= 200, "181-200",
+                                       "201+")))))))
+
+die_syn$HbA1c_INTERVAL <- ifelse(is.na(die_syn$HbA1c_VALUE) == TRUE, "NA",
+                              ifelse(die_syn$HbA1c_VALUE <= 5.5, "5.5-",
+                              ifelse(die_syn$HbA1c_VALUE > 5.5 & die_syn$HbA1c_VALUE <= 6.5, "5.5-6.5",
+                              ifelse(die_syn$HbA1c_VALUE > 6.5 & die_syn$HbA1c_VALUE <= 7.5, "6.5-7.5",
+                              ifelse(die_syn$HbA1c_VALUE > 7.5 & die_syn$HbA1c_VALUE <= 8.5, "7.5-8.5",
+                              ifelse(die_syn$HbA1c_VALUE > 8.5 & die_syn$HbA1c_VALUE <= 11.5, "8.5-11.5",
+                                     "11.5+"))))))
+
+die_syn$DCSI_INTERVAL <- ifelse(die_syn$DCSI_SCORE == 0 | die_syn$DCSI_SCORE == 1, "0&1",
+                             ifelse(die_syn$DCSI_SCORE == 2, "2",
+                             ifelse(die_syn$DCSI_SCORE == 3 | die_syn$DCSI_SCORE == 4, "3&4",
+                                    "5+")))
+
+die_syn$ELIX_INTERVAL <- ifelse(die_syn$ELIX_SCORE == 1 | die_syn$ELIX_SCORE == 2, "1&2",
+                             ifelse(die_syn$ELIX_SCORE == 3 | die_syn$ELIX_SCORE == 4, "3&4",
+                             ifelse(die_syn$ELIX_SCORE == 5 | die_syn$ELIX_SCORE == 6, "5&6",
+                                    "7+")))
+
+die_syn$CCI_INTERVAL <- as.factor(die_syn$CCI_INTERVAL)
+die_syn$GLUCOSE_INTERVAL <- as.factor(die_syn$GLUCOSE_INTERVAL)
+die_syn$HbA1c_INTERVAL <- as.factor(die_syn$HbA1c_INTERVAL)
+die_syn$DCSI_INTERVAL <- as.factor(die_syn$DCSI_INTERVAL)
+die_syn$ELIX_INTERVAL <- as.factor(die_syn$ELIX_INTERVAL)
+die_syn$INSULIN_INTERVAL <- as.factor(die_syn$INSULIN_INTERVAL)
+die_syn <- within(die_syn, GLUCOSE_INTERVAL <- relevel(GLUCOSE_INTERVAL, ref = "141-160"))
+die_syn <- within(die_syn, HbA1c_INTERVAL <- relevel(HbA1c_INTERVAL, ref = "6.5-7.5"))
+die_syn <- within(die_syn, INSULIN_INTERVAL <- relevel(INSULIN_INTERVAL, ref = "0"))
+die_syn <- within(die_syn, CCI_INTERVAL <- relevel(CCI_INTERVAL, ref = "9-12"))
+die_syn <- within(die_syn, DCSI_INTERVAL <- relevel(DCSI_INTERVAL, ref = "2"))
+die_syn <- within(die_syn, ELIX_INTERVAL <- relevel(ELIX_INTERVAL, ref = "3&4"))
+log_syn_2 <- glm(MORT_IN_30_DAY ~ GLUCOSE_INTERVAL + HbA1c_INTERVAL + INSULIN_INTERVAL + CCI_INTERVAL + 
+                 DCSI_INTERVAL + ELIX_INTERVAL,
+                 data = die_syn, family=binomial())
+summary(log_syn_2)
+exp(cbind(OR=coef(log_syn_2)))
+```
+Result: We find order of intervals of each variables according to mortality a little bit different from raw data.
+
+(n) 70% of synthetic data to be training set, and remaining 30% to be testing, then use logistic regression with threshold = 0.03
+    to predict mortality, and observe sens/spec/acc through confusion matrix.
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+trainnum1 <- 5600
+set.seed(300)
+trainrandom1 <- sample(1:nrow(die_syn), trainnum1)
+log_train1 <- die_syn[trainrandom1, ]
+log_test1 <- die_syn[-trainrandom1, ]
+
+log_syn_3 <- glm(MORT_IN_30_DAY ~ CCI_INTERVAL + DCSI_INTERVAL + ELIX_INTERVAL + GLUCOSE_INTERVAL + 
+                 HbA1c_INTERVAL + INSULIN_INTERVAL, data = log_train1, family = binomial())
+log_comb_mod1 = predict(log_syn_3, newdata = log_test1, type='response')
+log_comb_pred1 <- ifelse(log_comb_mod1 > 0.03, '1', '0')
+
+log_comb_rst1 <- confusionMatrix(log_comb_pred1, positive="1", log_test1$MORT_IN_30_DAY)
+log_comb_rst1
+log_table_syn <- table(log_comb_pred1, log_test1$MORT_IN_30_DAY)
+log_table_syn
+```
+Result: Balanced accuracy 2% lower than logistic of raw data.
+
+(o) Similarly, use randomforest model:
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+randomforest_syn <- randomForest(MORT_IN_30_DAY~ CCI_INTERVAL + DCSI_INTERVAL + ELIX_INTERVAL + GLUCOSE_INTERVAL +
+                    HbA1c_INTERVAL + INSULIN_INTERVAL, log_train1, ntree=500, importance=T, na.action=na.omit)
+plot(randomforest_syn)
+
+rf_mod1 <- predict(randomforest_syn, newdata = log_test1)
+rf_pred1 <- ifelse(rf_mod1 > 0.03, '1', '0')
+rf_rst1 <- confusionMatrix(rf_pred1, positive="1", log_test1$MORT_IN_30_DAY)
+rf_rst1
+```
+Result: Balanced accuracy 4% lower than randomForest of raw data.
+
+(p) Plot receiver characteristics curve(ROC) and see area under curve(AUC) of both models, 
+    and compare raw data with synthetic data:
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+roc1 = roc(log_test$MORT_IN_30_DAY, log_comb_mod)
+roc2 = roc(log_test$MORT_IN_30_DAY, rf_mod)
+roc3 = roc(log_test1$MORT_IN_30_DAY, log_comb_mod1)
+roc4 = roc(log_test1$MORT_IN_30_DAY, rf_mod1)
+auc(roc1)
+auc(roc2)
+auc(roc3)
+auc(roc4)
+plot(roc1, col = 2, lty = 2, main = "Specificity-Sensitivity Curve of both models of
+     raw data and synthetic data", xlim = range(0:1.25))
+plot(roc2, col = 4, lty = 2, add = TRUE)
+plot(roc3, col = 1, lty = 2, add = TRUE)
+plot(roc4, col = 3, lty = 2, add = TRUE)
+```
+Result: AUC of synthetic data 2-3% lower than that of raw data.
+
+(q) Make a table of sens/spec/acc/AUC of both models comparing raw data and synthetic data
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+options(digits=4)
+model_result1 <- model_result
+acc_vector <- c(model_result1[3,2], model_result1[3,3], model_result1[3,4], "0.729",
+                model_result1[3,5], model_result1[3,6], model_result1[3,7], "0.691",
+                "61.6%", "68.2%", "64.9%", "0.723",
+                "52.5%", "70.8%", "61.4%", "0.686")
+acc_table <- matrix(acc_vector, nrow=4, ncol=4)
+rownames(acc_table)[1:4] <- c("Sens", "Spec", "Balacc", "AUC")
+colnames(acc_table)[1:4] <- c("Raw log", "Raw rf", "Syn log", "Syn rf")
+as.table(acc_table)
+```
+
+(r) Use raw data as training set, and synthetic data as testing set, run logistic regression and predict mortality:
+```{r, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+log_raw_syn <- glm(MORT_IN_30_DAY ~ CCI_INTERVAL + DCSI_INTERVAL + ELIX_INTERVAL + GLUCOSE_INTERVAL +
+                   HbA1c_INTERVAL + INSULIN_INTERVAL,
+                   data = final_table, family = binomial())
+log_raw_syn_mod <- predict(log_raw_syn, newdata = die_syn, type='response')
+log_raw_syn_pred <- ifelse(log_raw_syn_mod > 0.06, '1', '0')
+log_raw_syn_rst <- confusionMatrix(log_raw_syn_pred, positive="1", die_syn$MORT_IN_30_DAY)
+log_raw_syn_rst
+auc(roc(die_syn$MORT_IN_30_DAY, log_raw_syn_mod))
+```
+Result: The balanced accuracy and sensitivity is not high, probably because mortality rate of raw data and synthetic data
+        has a difference of 3% while threshold is relevant to this rate.
+
+
+#8&9. Discussion and Conclusion:
+We find glucose value impact mortality of diabetics the most significantly, then are HbA1c value and CCI score,
+(insulin is binary so it lacks persuasion).
+Then for Elix sore, CCI score, and HbAic value, in most situations, higher the number is, higher the mortality is.
+For insulin status, without insulin has higher mortality than with insulin as drug.
+For glucose value, high value(>200) does mean high mortality, but low value(<100) does not mean low one.
+Value in interval 100-106 are the least likely to die. But of course diabetics with higher glucose value are more
+likely to die.
+And for DCSI score, value in the middle has lower mortality rate compared with both ends.
+
+For the model part, combined logistic regression model(with six variables combined) and randomforest model are
+recommended for the mortality prediction(logistic with threshold = 0.1 and randomforest with number of tree = 500).
+Though the specificity and sensitivity cannot simultaneous reach a high value and balanced accuracy is not high,
+the result is still decent and acceptable.
+
+After the synthetic data is generated, results show that importance of variables and variables distribution are similar,
+but the orders of intervals according to mortality of some variables are a little different from the raw data.
+This may be because intervals are set by myself in terms of the distribution of variables of raw data, and in order for 
+the comparison model to run successfully, I haven't made trivial change to intervals. However diviation and difference 
+are generated when transfering from raw data to synthetic data, like mortality rate decreases 3%, so it's normal that 
+some orders of intervals are trivially altered. The mortality prediction result of synthetic data seems decent using 
+70% to be training data and 30% to be testing data, with AUC=0.723(logistic) and 0.686(randomForest), balanced accuracy
+=64.9%(logistic) and 61.4%(randomForest), which are 2~3% lower than raw data which means a little bit less accurate.
+As mentioned above, since synthetic data is like replace values of the raw data(to protect privacy of data) according to 
+the distribution of values of different columns with a close percentage. However synthetic data may miss some key features 
+of some variables, so that's why it perform a little worse when doing prediction of mortality(or other conditions).
+When use raw data as training set and synthetic data as testing data, balanced accuracy is 60.9% and AUC is 0.636,
+lower than the above procedure, and this can be illustrated by the discussion indicated above.
+
+Future studies need to test other machine learning models besides the logistic regression and random forest models 
+explored in this project to see if better prediction results may be obtained as well as examine whether modifications 
+of variables in the model during the ICU stay alter mortality rate or risk.
+
+
+#10. Direction for future Investigation:
+Compare results of MIMIC raw data and synthetic data as well as study other machine learning skills for more variables,
+and start the new study "A Clinical Database-Driven Approach to Decision Support: Predicting Mortality Among Patients 
+with Acute Kidney Injury".
+
+
+# 11. Bibliography:
+(a) Predicting Mortality in Diabetic ICU Patients Using Machine Learning and
+Severity Indices
+Rajsavi S. Anand1,2, Paul Stey, PhD1,2, Sukrit Jain1,2, Dustin R. Biron1,2,
+Harikrishna Bhatt, MD1, Kristina Monteiro, PhD1, Edward Feller, MD1,
+Megan L. Ranney, MD, MPH1,3, Indra Neil Sarkar, PhD, MLIS1,2, Elizabeth S. Chen, PhD1,2
+Alpert Medical School1, Center for Biomedical Informatics2, and
+Emergency Digital Health Innovation Program, Department of Emergency Medicine3,
+Brown University, Providence, RI, USA
+https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5961793/
+(b) Comorbidities table:
+http://mchp-appserv.cpe.umanitoba.ca/concept/Charlson%20Comorbidities%20-%20Coding%20Algorithms%20for%
+20ICD-9-CM%20and%20ICD-10.pdf
+(c) ELIX table:
+http://mchp-appserv.cpe.umanitoba.ca/concept/Elixhauser%20Comorbidities%20-%20Coding%20Algorithms%20for%20ICD-9-CM%20and%20ICD-10.pdf
+(d) DCSI paper:
+https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3810070/
+(e) MIMIC website:
+https://mimic.physionet.org/
+(f) Stackoverflow & R documentation
